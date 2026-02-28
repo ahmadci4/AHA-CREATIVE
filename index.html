@@ -82,7 +82,7 @@
     <script type="text/babel" data-type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, setDoc, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
         const { useState, useEffect, useMemo, useRef } = React;
 
@@ -105,29 +105,32 @@
         const formatDate = (d) => new Date(d).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         const formatDateOnly = (d) => new Date(d).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         
-        // Logika Akurat untuk Filter Rekapan
+        // Logika Akurat untuk Filter Rekapan (Bebas Bug Mutasi)
         const getPeriod = (dateStr) => { 
             const d = new Date(dateStr); 
-            // Ambil senin minggu ini sebagai patokan minggu
+            const year = d.getFullYear();
+            const month = d.getMonth();
+            const date = d.getDate();
             const day = d.getDay();
-            const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-            const monday = new Date(d.setDate(diff));
+            const diff = date - day + (day === 0 ? -6 : 1);
+            const monday = new Date(year, month, diff);
             return { 
-                day: d.toLocaleDateString('en-CA'), // YYYY-MM-DD
+                day: `${year}-${String(month+1).padStart(2,'0')}-${String(date).padStart(2,'0')}`, 
                 week: `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`, 
-                month: `${d.getFullYear()}-${d.getMonth()}`, 
-                year: `${d.getFullYear()}` 
+                month: `${year}-${month}`, 
+                year: `${year}` 
             }; 
         };
 
         const App = () => {
             const urlParams = new URLSearchParams(window.location.search);
             const [page, setPage] = useState(urlParams.get('mode') === 'customer' ? 'customer' : 'catalog'); 
-            const [user, setUser] = useState(null); 
+            const [fbUser, setFbUser] = useState(null); // Auth database user
+            const [user, setUser] = useState(null);     // Admin login state
             const [installPrompt, setInstallPrompt] = useState(null);
             const [dbReady, setDbReady] = useState(false);
 
-            // DEFAULT SETTINGS (Aman dari Destructuring Error)
+            // DEFAULT SETTINGS
             const defaultSettings = {
                 appName: 'AHA Creative', tagline: 'Search Over', ceoName: 'Awaludin',
                 logo: 'logoaha.png', cover: 'bgaha.png', password: 'admin', themeColor: '#D92D20', 
@@ -154,11 +157,24 @@
             const [transactions, setTransactions] = useState([]);
             const [currentOrder, setCurrentOrder] = useState(null);
 
-            useEffect(() => { signInAnonymously(auth); onAuthStateChanged(auth, (u) => { if (u) setDbReady(true); }); }, []);
+            // AUTH & KONEKSI ANTI ERROR
+            useEffect(() => {
+                const initAuth = async () => {
+                    try {
+                        // Fallback to anonymous sign in to avoid custom-token-mismatch error
+                        await signInAnonymously(auth);
+                    } catch (err) { console.error("Auth error", err); }
+                };
+                initAuth();
+                const unsubscribe = onAuthStateChanged(auth, (u) => { 
+                    if (u) { setFbUser(u); setDbReady(true); } 
+                });
+                return () => unsubscribe();
+            }, []);
 
             // Mencegah Crash saat Merge Data Firebase
             useEffect(() => {
-                if (!dbReady) return;
+                if (!dbReady || !fbUser) return;
                 const unsub = onSnapshot(doc(db, PUBLIC_PATH, 'app_settings', 'main_config'), (docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
@@ -174,35 +190,38 @@
                             stickerPapers: data.stickerPapers || defaultSettings.stickerPapers
                         });
                     } else { setDoc(doc(db, PUBLIC_PATH, 'app_settings', 'main_config'), defaultSettings); }
-                });
+                }, (error) => console.error(error));
                 return () => unsub();
-            }, [dbReady]);
+            }, [dbReady, fbUser]);
 
             useEffect(() => {
-                if (!dbReady) return;
+                if (!dbReady || !fbUser) return;
                 const unsub = onSnapshot(query(collection(db, PUBLIC_PATH, 'transactions_col')), (snapshot) => {
                     const loaded = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
                     loaded.sort((a, b) => new Date(b.date) - new Date(a.date));
                     setTransactions(loaded);
-                });
+                }, (error) => console.error(error));
                 return () => unsub();
-            }, [dbReady]);
+            }, [dbReady, fbUser]);
 
             const handleSaveSettings = async (newSettings) => {
-                if (!dbReady) return alert("Menghubungkan ke server...");
+                if (!dbReady || !fbUser) return alert("Belum terhubung ke server.");
                 try { await setDoc(doc(db, PUBLIC_PATH, 'app_settings', 'main_config'), newSettings); alert("Pengaturan Tersimpan ke Cloud!"); } 
                 catch (e) { alert("Gagal Simpan: " + e.message); }
             };
 
             const handleAddTransaction = async (trxData) => {
-                if (!dbReady) return alert("Koneksi gagal.");
+                if (!dbReady || !fbUser) return alert("Koneksi gagal.");
                 try { await addDoc(collection(db, PUBLIC_PATH, 'transactions_col'), trxData); } 
                 catch (e) { alert("Gagal transaksi: " + e.message); }
             };
 
             const handleSoftDelete = async (id) => {
+                if (!dbReady || !fbUser) return alert("Koneksi gagal, silakan refresh halaman.");
                 if (confirm("Hapus catatan ini?")) {
-                    try { await updateDoc(doc(db, PUBLIC_PATH, 'transactions_col', id), { isDeleted: true, deletedAt: new Date().toISOString() }); } catch (e) {}
+                    try { 
+                        await updateDoc(doc(db, PUBLIC_PATH, 'transactions_col', id), { isDeleted: true, deletedAt: new Date().toISOString() }); 
+                    } catch (e) { alert("Gagal menghapus: " + e.message); }
                 }
             };
 
@@ -225,13 +244,13 @@
             const CatalogPage = () => {
                 const [showPromo, setShowPromo] = useState(false);
 
-                // Cek status promo harian (muncul 1 kali sehari per user)
+                // Tampil Promo 1x sehari animasi halus
                 useEffect(() => {
                     if(settings.promoBanner?.isActive) {
                         const todayStr = new Date().toLocaleDateString();
                         const lastClosed = localStorage.getItem('aha_promo_closed');
                         if(lastClosed !== todayStr) {
-                            setTimeout(() => setShowPromo(true), 2000); // Tampil setelah 2 detik
+                            setTimeout(() => setShowPromo(true), 2000);
                         }
                     }
                 }, [settings.promoBanner]);
@@ -249,11 +268,11 @@
                             <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-md p-4 fade-in">
                                 <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full overflow-hidden relative zoom-in">
                                     <button onClick={closePromo} className="absolute top-4 right-4 text-white bg-black/40 hover:bg-black/80 rounded-full w-8 h-8 flex items-center justify-center transition z-10"><i className="fas fa-times"></i></button>
-                                    {settings.promoBanner.image ? <img src={settings.promoBanner.image} className="w-full h-48 object-cover" /> : <div className="w-full h-32 flex items-center justify-center" style={{backgroundColor: settings.themeColor}}><i className="fas fa-bullhorn text-5xl text-white opacity-50"></i></div>}
+                                    {settings.promoBanner?.image ? <img src={settings.promoBanner.image} className="w-full h-48 object-cover" /> : <div className="w-full h-32 flex items-center justify-center" style={{backgroundColor: settings.themeColor}}><i className="fas fa-bullhorn text-5xl text-white opacity-50"></i></div>}
                                     <div className="p-6 text-center">
-                                        <h3 className="text-2xl font-black text-gray-900 mb-2">{settings.promoBanner.title}</h3>
-                                        <p className="text-gray-500 mb-6 text-sm leading-relaxed">{settings.promoBanner.content}</p>
-                                        <button onClick={() => {closePromo(); setPage('customer');}} className="w-full text-white font-bold py-3 rounded-full shadow-lg transition transform hover:scale-105" style={{backgroundColor: settings.themeColor}}>{settings.promoBanner.buttonText}</button>
+                                        <h3 className="text-2xl font-black text-gray-900 mb-2">{settings.promoBanner?.title}</h3>
+                                        <p className="text-gray-500 mb-6 text-sm leading-relaxed">{settings.promoBanner?.content}</p>
+                                        <button onClick={() => {closePromo(); setPage('customer');}} className="w-full text-white font-bold py-3 rounded-full shadow-lg transition transform hover:scale-105" style={{backgroundColor: settings.themeColor}}>{settings.promoBanner?.buttonText}</button>
                                     </div>
                                 </div>
                             </div>
@@ -410,7 +429,7 @@
                 );
             };
 
-            // 2. LOGIN ADMIN (Animasi Coin 360)
+            // 2. LOGIN ADMIN
             const Login = () => {
                 const [p, setP] = useState('');
                 const [s, setS] = useState(false);
@@ -418,7 +437,7 @@
                 const go = () => { if(p==='developer004'){setUser({role:'dev'});setPage('developer_dashboard');} else if(p===settings.password){setUser({role:'admin'});setPage('dashboard');} else{setE('Sandi Salah');} };
                 return (
                     <div className="min-h-screen flex items-center justify-center relative bg-gray-900 overflow-hidden">
-                        <div className="absolute inset-0 z-0"><img src={settings.cover} className="w-full h-full object-cover opacity-30 grayscale" /></div>
+                        <div className="absolute inset-0 z-0"><img src={settings.cover} onError={(e) => e.target.src='https://via.placeholder.com/800x600/333/fff?text=Cover+Image'} className="w-full h-full object-cover opacity-30 grayscale" /></div>
                         <div className="relative z-10 w-full max-w-sm p-8 bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl mx-4 fade-in border border-white/20">
                             <button onClick={()=>setPage('catalog')} className="absolute top-5 left-5 text-gray-300 hover:text-white bg-black/30 rounded-full w-8 h-8 flex items-center justify-center transition"><i className="fas fa-arrow-left"></i></button>
                             <div className="text-center mb-8 mt-4">
@@ -440,13 +459,12 @@
             // 3. DASHBOARD (Tarik Saldo + Chart.js)
             const Dashboard = () => {
                 const active = transactions.filter(t => !t.isDeleted);
-                const todayStr = new Date().toISOString().split('T')[0];
+                const todayStr = new Date().toLocaleDateString('en-CA');
                 
-                // Kalkulasi Saldo (Pemasukan - Penarikan)
                 const incTotal = active.filter(t=>t.type !== 'withdraw').reduce((a,b)=>a+b.total, 0);
                 const wdTotal = active.filter(t=>t.type === 'withdraw').reduce((a,b)=>a+Math.abs(t.total), 0);
                 const saldoAktif = incTotal - wdTotal;
-                const incToday = active.filter(t => t.date.startsWith(todayStr) && t.type !== 'withdraw').reduce((a, b) => a + b.total, 0);
+                const incToday = active.filter(t => getPeriod(t.date).day === todayStr && t.type !== 'withdraw').reduce((a, b) => a + b.total, 0);
 
                 const chartRef = useRef(null);
                 const chartInst = useRef(null);
@@ -468,8 +486,8 @@
                 useEffect(() => {
                     if (chartRef.current && active.length > 0) {
                         if (chartInst.current) chartInst.current.destroy();
-                        const last7Days = [...Array(7)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().split('T')[0]; }).reverse();
-                        const dataChart = last7Days.map(day => active.filter(t => t.date.startsWith(day) && t.type !== 'withdraw').reduce((a,b)=>a+b.total,0));
+                        const last7Days = [...Array(7)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - i); return d.toLocaleDateString('en-CA'); }).reverse();
+                        const dataChart = last7Days.map(day => active.filter(t => getPeriod(t.date).day === day && t.type !== 'withdraw').reduce((a,b)=>a+b.total,0));
                         const ctx = chartRef.current.getContext('2d');
                         chartInst.current = new Chart(ctx, {
                             type: 'line',
@@ -508,7 +526,7 @@
                                     <div><p className="text-gray-400 text-xs font-black uppercase tracking-widest">Pendapatan Hari Ini</p><h2 className="text-3xl md:text-5xl font-black mt-2 text-white">{formatRupiah(incToday)}</h2></div>
                                     <div className="w-14 h-14 md:w-20 md:h-20 rounded-2xl flex items-center justify-center text-white text-2xl md:text-4xl shadow-lg transform group-hover:scale-110 transition" style={{backgroundColor: settings.themeColor}}><i className="fas fa-chart-line"></i></div>
                                 </div>
-                                <p className="text-xs font-medium text-gray-400 mt-8"><i className="fas fa-info-circle mr-1"></i> Data real-time dari {active.filter(t => t.date.startsWith(todayStr) && t.type !== 'withdraw').length} order hari ini.</p>
+                                <p className="text-xs font-medium text-gray-400 mt-8"><i className="fas fa-info-circle mr-1"></i> Data real-time dari {active.filter(t => getPeriod(t.date).day === todayStr && t.type !== 'withdraw').length} order hari ini.</p>
                             </div>
                         </div>
 
@@ -525,6 +543,7 @@
                 );
             };
 
+            // 4. CALCULATOR
             const Calculator = () => {
                 const [tab, setTab] = useState('spanduk');
                 const [data, setData] = useState({ name: '', qty: 1, design: false, rush: false, loc: 'Bayan', w: '', h: '', wUnit: 'm', hUnit: 'm', mat: settings.bannerMaterials?.[0]?.name || 'Biasa', stand: false, standType: settings.standTypes?.[0]?.name || 'Biasa', grommet: true, stPaper: settings.stickerPapers?.[0]?.name || 'Chromo', stW: '', stH: '' });
@@ -562,13 +581,13 @@
                             {tab === 'spanduk' ? (
                                 <>
                                     <div className="grid grid-cols-2 gap-4"><div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Panjang</label><div className="flex border rounded-xl bg-gray-50 focus-within:bg-white overflow-hidden"><input type="number" className="w-full p-4 outline-none bg-transparent font-bold text-gray-800" placeholder="0" value={data.w} onChange={e=>setData({...data, w:e.target.value})} /><select className="bg-gray-200 px-3 text-sm font-bold border-l outline-none" value={data.wUnit} onChange={e=>setData({...data, wUnit:e.target.value})}><option value="m">m</option><option value="cm">cm</option></select></div></div><div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Lebar</label><div className="flex border rounded-xl bg-gray-50 focus-within:bg-white overflow-hidden"><input type="number" className="w-full p-4 outline-none bg-transparent font-bold text-gray-800" placeholder="0" value={data.h} onChange={e=>setData({...data, h:e.target.value})} /><select className="bg-gray-200 px-3 text-sm font-bold border-l outline-none" value={data.hUnit} onChange={e=>setData({...data, hUnit:e.target.value})}><option value="m">m</option><option value="cm">cm</option></select></div></div></div>
-                                    <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Pilih Bahan</label><select className="w-full border p-4 rounded-xl bg-gray-50 outline-none font-bold text-gray-800" value={data.mat} onChange={e=>setData({...data, mat:e.target.value})}>{settings.bannerMaterials?.map(m=><option key={m.name} value={m.name}>{m.name}</option>)}</select></div>
-                                    <div className="p-4 border rounded-xl bg-gray-50"><label className="flex items-center cursor-pointer"><input type="checkbox" className="mr-3 w-5 h-5 accent-red-600" checked={data.stand} onChange={e=>setData({...data, stand:e.target.checked})}/> <span className="font-bold text-gray-700">Gunakan Stand Banner</span></label>{data.stand && <select className="w-full mt-4 border p-3 rounded-lg bg-white outline-none font-bold" value={data.standType} onChange={e=>setData({...data, standType:e.target.value})}>{settings.standTypes?.map(s=><option key={s.name} value={s.name}>{s.name} (+{formatRupiah(s.price)})</option>)}</select>}</div>
+                                    <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Pilih Bahan</label><select className="w-full border p-4 rounded-xl bg-gray-50 outline-none font-bold text-gray-800" value={data.mat} onChange={e=>setData({...data, mat:e.target.value})}>{settings.bannerMaterials?.map((m,i)=><option key={i} value={m.name}>{m.name}</option>)}</select></div>
+                                    <div className="p-4 border rounded-xl bg-gray-50"><label className="flex items-center cursor-pointer"><input type="checkbox" className="mr-3 w-5 h-5 accent-red-600" checked={data.stand} onChange={e=>setData({...data, stand:e.target.checked})}/> <span className="font-bold text-gray-700">Gunakan Stand Banner</span></label>{data.stand && <select className="w-full mt-4 border p-3 rounded-lg bg-white outline-none font-bold" value={data.standType} onChange={e=>setData({...data, standType:e.target.value})}>{settings.standTypes?.map((s,i)=><option key={i} value={s.name}>{s.name} (+{formatRupiah(s.price)})</option>)}</select>}</div>
                                 </>
                             ) : (
                                 <>
                                     <div className="grid grid-cols-2 gap-4"><div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Panjang (cm)</label><input type="number" className="w-full border p-4 rounded-xl bg-gray-50 outline-none font-bold text-gray-800" placeholder="0" value={data.stW} onChange={e=>setData({...data, stW:e.target.value})} /></div><div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Lebar (cm)</label><input type="number" className="w-full border p-4 rounded-xl bg-gray-50 outline-none font-bold text-gray-800" placeholder="0" value={data.stH} onChange={e=>setData({...data, stH:e.target.value})} /></div></div>
-                                    <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Jenis Kertas</label><select className="w-full border p-4 rounded-xl bg-gray-50 outline-none font-bold text-gray-800" value={data.stPaper} onChange={e=>setData({...data, stPaper:e.target.value})}>{settings.stickerPapers?.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}</select></div>
+                                    <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Jenis Kertas</label><select className="w-full border p-4 rounded-xl bg-gray-50 outline-none font-bold text-gray-800" value={data.stPaper} onChange={e=>setData({...data, stPaper:e.target.value})}>{settings.stickerPapers?.map((p,i)=><option key={i} value={p.name}>{p.name}</option>)}</select></div>
                                 </>
                             )}
                             <div className="flex items-center justify-between bg-gray-100 p-2 rounded-xl"><span className="text-sm font-bold text-gray-600 pl-4 uppercase">Kuantitas (Qty)</span><div className="flex items-center bg-white rounded-lg shadow-sm border overflow-hidden"><button onClick={()=>setData({...data, qty:Math.max(1,data.qty-1)})} className="px-5 py-3 hover:bg-gray-50 font-black text-gray-500">-</button><span className="px-4 py-3 font-black text-lg min-w-[3rem] text-center">{data.qty}</span><button onClick={()=>setData({...data, qty:data.qty+1})} className="px-5 py-3 hover:bg-gray-50 font-black text-gray-500">+</button></div></div>
@@ -582,6 +601,9 @@
             // 5. RECEIPT / NOTA
             const Receipt = () => {
                 if (!currentOrder) return null;
+                const downImg = () => { html2canvas(document.querySelector("#nota-print")).then(canvas => { const link = document.createElement('a'); link.download = `Nota_${currentOrder.id}.png`; link.href = canvas.toDataURL(); link.click(); }); };
+                const downPdf = () => { html2canvas(document.querySelector("#nota-print")).then(canvas => { const imgData = canvas.toDataURL('image/png'); const pdf = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: [80, 150] }); pdf.addImage(imgData, 'PNG', 2.5, 5, 75, (canvas.height * 75) / canvas.width); pdf.save(`Nota_${currentOrder.id}.pdf`); }); };
+
                 return (
                     <div className="fade-in p-4 md:p-8 flex justify-center flex-col items-center">
                         <div id="nota-print" className="print-container bg-white p-5 rounded-xl shadow-2xl w-full max-w-[320px] relative border border-gray-200 overflow-hidden">
@@ -610,7 +632,9 @@
                         
                         <div className="mt-6 flex flex-wrap justify-center gap-2 max-w-[320px] no-print">
                             <button onClick={()=>window.print()} className="w-full bg-blue-600 text-white py-3 rounded-xl shadow-lg font-bold hover:bg-blue-700 text-sm transition"><i className="fas fa-print mr-2"></i> Print Thermal / Kertas</button>
-                            <button onClick={() => setPage('dashboard')} className="w-full bg-gray-800 text-white py-3 rounded-xl shadow-lg font-bold hover:bg-gray-700 text-sm transition"><i className="fas fa-home mr-2"></i> Ke Dashboard</button>
+                            <button onClick={downImg} className="flex-1 bg-green-500 text-white py-3 rounded-xl shadow-lg font-bold hover:bg-green-600 text-xs"><i className="fas fa-image mr-1"></i> PNG</button>
+                            <button onClick={downPdf} className="flex-1 bg-red-500 text-white py-3 rounded-xl shadow-lg font-bold hover:bg-red-600 text-xs"><i className="fas fa-file-pdf mr-1"></i> PDF</button>
+                            <button onClick={() => setPage('dashboard')} className="w-full bg-gray-800 text-white py-3 rounded-xl shadow-lg font-bold hover:bg-gray-700 mt-2 text-sm"><i className="fas fa-home mr-2"></i> Ke Dashboard</button>
                         </div>
                     </div>
                 );
@@ -623,7 +647,7 @@
                 const filteredData = transactions.filter(t => {
                     if (t.isDeleted) return false;
                     const d = getPeriod(t.date);
-                    const p = getPeriod(new Date());
+                    const p = getPeriod(new Date().toISOString());
                     if (filter === 'daily') return d.day === p.day;
                     if (filter === 'weekly') return d.week === p.week;
                     if (filter === 'monthly') return d.month === p.month;
@@ -631,7 +655,7 @@
                     return true;
                 });
 
-                const total = filteredData.reduce((a, b) => a + b.total, 0); // Total saldo bersih
+                const total = filteredData.reduce((a, b) => a + b.total, 0);
                 const incomeOnly = filteredData.filter(t=>t.type !== 'withdraw').reduce((a,b)=>a+b.total,0);
                 const wdOnly = filteredData.filter(t=>t.type === 'withdraw').reduce((a,b)=>a+Math.abs(t.total),0);
 
@@ -707,19 +731,19 @@
 
                 const save = () => handleSaveSettings(loc);
                 const fileH = (e, k) => { const f=e.target.files[0]; if(f){ const r=new FileReader(); r.onloadend=()=>setLoc({...loc, [k]:r.result}); r.readAsDataURL(f); }};
-                const updateArr = (k, i, v) => { const arr=[...loc[k]]; arr[i].price=parseInt(v)||0; setLoc({...loc, [k]:arr}); };
+                const updateArr = (k, i, v) => { if(!loc[k])return; const arr=[...loc[k]]; arr[i] = {...arr[i], price: parseInt(v)||0}; setLoc({...loc, [k]:arr}); };
                 
-                const addEmployee = () => { if(emp.trim()) { setLoc(prev => ({...prev, employees: [...(prev.employees||[]), emp.trim()]})); setEmp(''); } };
+                const addEmployee = () => { if(emp.trim() !== '') { setLoc(prev => ({...prev, employees: [...(prev.employees||[]), emp.trim()]})); setEmp(''); } };
                 const removeEmployee = (idx) => { const a = [...loc.employees]; a.splice(idx, 1); setLoc({...loc, employees: a}); };
                 
-                const addClient = () => { if(cli.trim()) { setLoc(prev => ({...prev, clients: [...(prev.clients||[]), cli.trim()]})); setCli(''); } };
+                const addClient = () => { if(cli.trim() !== '') { setLoc(prev => ({...prev, clients: [...(prev.clients||[]), cli.trim()]})); setCli(''); } };
                 const removeClient = (idx) => { const a = [...loc.clients]; a.splice(idx, 1); setLoc({...loc, clients: a}); };
 
                 const addCatalog = () => { if(newCat.title && newCat.priceValue) { setLoc(p=>({...p, catalogItems: [...(p.catalogItems||[]), {...newCat, id:Date.now()}]})); setNewCat({ title: '', desc: '', priceLabel: 'Mulai Dari', priceValue: '', priceUnit: '/m²', badge: '', image: '' }); } else alert("Judul & Harga tidak boleh kosong!"); };
-                const removeCatalog = (idx) => { const a = [...loc.catalogItems]; a.splice(idx, 1); setLoc({...loc, catalogItems: a}); };
+                const removeCatalog = (idx) => { const a = [...(loc.catalogItems||[])]; a.splice(idx, 1); setLoc({...loc, catalogItems: a}); };
 
                 const addPortfolio = (e) => { const f=e.target.files[0]; if(f){ const r=new FileReader(); r.onloadend=()=>setLoc(p=>({...p, portfolio: [...(p.portfolio||[]), r.result]})); r.readAsDataURL(f); }};
-                const removePortfolio = (idx) => { const a = [...loc.portfolio]; a.splice(idx, 1); setLoc({...loc, portfolio: a}); };
+                const removePortfolio = (idx) => { const a = [...(loc.portfolio||[])]; a.splice(idx, 1); setLoc({...loc, portfolio: a}); };
 
                 return (
                     <div className="fade-in p-4 md:p-8">
@@ -740,10 +764,10 @@
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                         <div className="space-y-5">
                                             <h3 className="font-black text-gray-800 border-b-2 border-gray-100 pb-2 text-lg">Teks & Info Utama</h3>
-                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Nama Direktur / CEO</label><input type="text" className="w-full border p-3 rounded-xl bg-gray-50 font-bold" value={loc.ceoName} onChange={e=>setLoc({...loc, ceoName:e.target.value})} /></div>
-                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Slogan (Bawah Judul)</label><input type="text" className="w-full border p-3 rounded-xl bg-gray-50 font-medium" value={loc.slogan} onChange={e=>setLoc({...loc, slogan:e.target.value})}/></div>
-                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Teks Berjalan (Marquee Atas)</label><textarea className="w-full border p-3 rounded-xl bg-gray-50 h-20 text-sm leading-relaxed" value={loc.runningText} onChange={e=>setLoc({...loc, runningText:e.target.value})}/></div>
-                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Info Durasi Pengerjaan</label><textarea className="w-full border p-3 rounded-xl bg-gray-50 h-20 text-sm leading-relaxed" value={loc.durationInfo} onChange={e=>setLoc({...loc, durationInfo:e.target.value})}/></div>
+                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Nama Direktur / CEO</label><input type="text" className="w-full border p-3 rounded-xl bg-gray-50 font-bold" value={loc.ceoName || ''} onChange={e=>setLoc({...loc, ceoName:e.target.value})} /></div>
+                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Slogan (Bawah Judul)</label><input type="text" className="w-full border p-3 rounded-xl bg-gray-50 font-medium" value={loc.slogan || ''} onChange={e=>setLoc({...loc, slogan:e.target.value})}/></div>
+                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Teks Berjalan (Marquee Atas)</label><textarea className="w-full border p-3 rounded-xl bg-gray-50 h-20 text-sm leading-relaxed" value={loc.runningText || ''} onChange={e=>setLoc({...loc, runningText:e.target.value})}/></div>
+                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Info Durasi Pengerjaan</label><textarea className="w-full border p-3 rounded-xl bg-gray-50 h-20 text-sm leading-relaxed" value={loc.durationInfo || ''} onChange={e=>setLoc({...loc, durationInfo:e.target.value})}/></div>
                                         </div>
                                         <div className="space-y-5">
                                             <h3 className="font-black text-gray-800 border-b-2 border-gray-100 pb-2 text-lg">Gambar & Lokasi</h3>
@@ -759,8 +783,8 @@
                                                     <input type="file" onChange={e=>fileH(e,'cover')} className="text-xs w-full block text-gray-500"/>
                                                 </div>
                                             </div>
-                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Link Google Maps (Button)</label><input type="text" className="w-full border p-3 rounded-xl bg-gray-50 text-sm font-mono" value={loc.mapLink} onChange={e=>setLoc({...loc, mapLink:e.target.value})}/></div>
-                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Embed Google Maps (Iframe SRC)</label><textarea className="w-full border p-3 rounded-xl bg-gray-50 h-20 text-xs font-mono" placeholder="https://www.google.com/maps/embed?pb=..." value={loc.mapEmbed} onChange={e=>setLoc({...loc, mapEmbed:e.target.value})}/></div>
+                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Link Google Maps (Button)</label><input type="text" className="w-full border p-3 rounded-xl bg-gray-50 text-sm font-mono" value={loc.mapLink || ''} onChange={e=>setLoc({...loc, mapLink:e.target.value})}/></div>
+                                            <div><label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Embed Google Maps (Iframe SRC)</label><textarea className="w-full border p-3 rounded-xl bg-gray-50 h-20 text-xs font-mono" placeholder="https://www.google.com/maps/embed?pb=..." value={loc.mapEmbed || ''} onChange={e=>setLoc({...loc, mapEmbed:e.target.value})}/></div>
                                         </div>
                                     </div>
                                     
@@ -787,12 +811,12 @@
                                         <div className="absolute top-0 right-0 p-4 opacity-10"><i className="fas fa-bullhorn text-9xl"></i></div>
                                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-red-200 pb-4 relative z-10">
                                             <div><h3 className="font-black text-xl text-gray-900"><i className="fas fa-bolt text-yellow-500 mr-2"></i>Banner Promo (Pop-Up)</h3><p className="text-xs text-gray-500 font-bold mt-1">Muncul 1 kali sehari ke pengunjung web.</p></div>
-                                            <label className="flex items-center text-sm font-black cursor-pointer bg-white px-5 py-2.5 rounded-full shadow-md border mt-4 md:mt-0"><span className="mr-3">Aktifkan</span><input type="checkbox" checked={loc.promoBanner?.isActive} onChange={e=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), isActive: e.target.checked}}))} className="w-5 h-5 accent-green-500"/></label>
+                                            <label className="flex items-center text-sm font-black cursor-pointer bg-white px-5 py-2.5 rounded-full shadow-md border mt-4 md:mt-0"><span className="mr-3">Aktifkan</span><input type="checkbox" checked={!!loc.promoBanner?.isActive} onChange={e=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), isActive: e.target.checked}}))} className="w-5 h-5 accent-green-500"/></label>
                                         </div>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 relative z-10">
-                                            <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Judul Promo</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-gray-900 shadow-sm" placeholder="Diskon Ramadhan!" value={loc.promoBanner?.title} onChange={e=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), title: e.target.value}}))}/></div>
-                                            <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Teks Tombol</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-gray-900 shadow-sm" placeholder="Klaim Sekarang" value={loc.promoBanner?.buttonText} onChange={e=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), buttonText: e.target.value}}))}/></div>
-                                            <div className="md:col-span-2"><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Isi Pesan Promosi</label><textarea className="w-full border p-3 rounded-xl bg-white h-20 text-sm shadow-sm" placeholder="Deskripsi diskon..." value={loc.promoBanner?.content} onChange={e=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), content: e.target.value}}))}/></div>
+                                            <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Judul Promo</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-gray-900 shadow-sm" placeholder="Diskon Ramadhan!" value={loc.promoBanner?.title || ''} onChange={e=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), title: e.target.value}}))}/></div>
+                                            <div><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Teks Tombol</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-gray-900 shadow-sm" placeholder="Klaim Sekarang" value={loc.promoBanner?.buttonText || ''} onChange={e=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), buttonText: e.target.value}}))}/></div>
+                                            <div className="md:col-span-2"><label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Isi Pesan Promosi</label><textarea className="w-full border p-3 rounded-xl bg-white h-20 text-sm shadow-sm" placeholder="Deskripsi diskon..." value={loc.promoBanner?.content || ''} onChange={e=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), content: e.target.value}}))}/></div>
                                             <div className="md:col-span-2 flex items-center gap-4 bg-white p-4 rounded-xl border shadow-sm"><div className="flex-1"><label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Upload Gambar Promo (Opsional)</label><input type="file" accept="image/*" onChange={e=>{const f=e.target.files[0]; if(f){const r=new FileReader(); r.onloadend=()=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), image: r.result}})); r.readAsDataURL(f);}}} className="text-sm w-full text-gray-500"/></div>{loc.promoBanner?.image && <div className="relative"><img src={loc.promoBanner?.image} className="h-20 w-32 object-cover rounded-lg shadow-md border"/><button onClick={()=>setLoc(p=>({...p, promoBanner: {...(p.promoBanner||{}), image:''}}))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow-lg"><i className="fas fa-times"></i></button></div>}</div>
                                         </div>
                                     </div>
@@ -811,12 +835,12 @@
                                         <h3 className="font-black text-xl text-gray-800 mb-4 border-b pb-2"><i className="fas fa-th-list text-green-500 mr-2"></i>Katalog Produk</h3>
                                         <div className="bg-gray-50 p-5 rounded-3xl border border-gray-200 mb-6 shadow-sm">
                                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-                                                <div><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Judul Layanan</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-sm" placeholder="Cth: Cetak Brosur" value={newCat.title} onChange={e=>setNewCat({...newCat, title:e.target.value})} /></div>
-                                                <div><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Harga (Teks)</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-sm text-red-600" placeholder="Rp 20.000" value={newCat.priceValue} onChange={e=>setNewCat({...newCat, priceValue:e.target.value})} /></div>
-                                                <div><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Satuan Harga</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-sm text-gray-500" placeholder="/m² atau /pcs" value={newCat.priceUnit} onChange={e=>setNewCat({...newCat, priceUnit:e.target.value})} /></div>
-                                                <div className="md:col-span-3"><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Deskripsi Singkat</label><textarea className="w-full border p-3 rounded-xl bg-white text-sm h-16" value={newCat.desc} onChange={e=>setNewCat({...newCat, desc:e.target.value})} /></div>
-                                                <div><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Badge Spesial</label><input type="text" className="w-full border p-3 rounded-xl bg-white text-sm font-bold" placeholder="Cth: Best Seller" value={newCat.badge} onChange={e=>setNewCat({...newCat, badge:e.target.value})} /></div>
-                                                <div className="md:col-span-2"><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Link Gambar URL</label><input type="text" className="w-full border p-3 rounded-xl bg-white text-sm font-mono" placeholder="https://..." value={newCat.image} onChange={e=>setNewCat({...newCat, image:e.target.value})} /></div>
+                                                <div><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Judul Layanan</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-sm" placeholder="Cth: Cetak Brosur" value={newCat.title || ''} onChange={e=>setNewCat({...newCat, title:e.target.value})} /></div>
+                                                <div><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Harga (Teks)</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-sm text-red-600" placeholder="Rp 20.000" value={newCat.priceValue || ''} onChange={e=>setNewCat({...newCat, priceValue:e.target.value})} /></div>
+                                                <div><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Satuan Harga</label><input type="text" className="w-full border p-3 rounded-xl bg-white font-bold text-sm text-gray-500" placeholder="/m² atau /pcs" value={newCat.priceUnit || ''} onChange={e=>setNewCat({...newCat, priceUnit:e.target.value})} /></div>
+                                                <div className="md:col-span-3"><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Deskripsi Singkat</label><textarea className="w-full border p-3 rounded-xl bg-white text-sm h-16" value={newCat.desc || ''} onChange={e=>setNewCat({...newCat, desc:e.target.value})} /></div>
+                                                <div><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Badge Spesial</label><input type="text" className="w-full border p-3 rounded-xl bg-white text-sm font-bold" placeholder="Cth: Best Seller" value={newCat.badge || ''} onChange={e=>setNewCat({...newCat, badge:e.target.value})} /></div>
+                                                <div className="md:col-span-2"><label className="text-[10px] font-black text-gray-400 uppercase block mb-1">Link Gambar URL</label><input type="text" className="w-full border p-3 rounded-xl bg-white text-sm font-mono" placeholder="https://..." value={newCat.image || ''} onChange={e=>setNewCat({...newCat, image:e.target.value})} /></div>
                                             </div>
                                             <button onClick={addCatalog} className="bg-gray-900 text-white font-black px-6 py-3 rounded-xl hover:bg-black transition shadow-lg w-full md:w-auto"><i className="fas fa-plus mr-2 text-green-400"></i> Tambah Item Katalog</button>
                                         </div>
@@ -838,6 +862,14 @@
 
                             {tab === 'price' && (
                                 <div className="fade-in grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div className="md:col-span-3 bg-gray-50 rounded-3xl p-6 border border-gray-200 shadow-inner">
+                                        <h3 className="font-black text-gray-800 border-b-2 border-gray-200 pb-2 mb-4 text-center">Keamanan & Login Admin</h3>
+                                        <div className="max-w-md mx-auto">
+                                            <label className="text-xs font-bold text-gray-500 uppercase block mb-2 text-center">Kata Sandi Saat Ini</label>
+                                            <input type="text" value={loc.password || ''} onChange={e=>setLoc({...loc, password:e.target.value})} className="w-full border p-4 rounded-xl text-center font-black text-red-600 outline-none focus:ring-2 focus:ring-red-300 tracking-widest"/>
+                                            <p className="text-[10px] text-gray-400 mt-2 text-center font-bold">Ganti sandi ini untuk mengamankan halaman dashboard Anda.</p>
+                                        </div>
+                                    </div>
                                     <div className="bg-gray-50 rounded-3xl p-5 border border-gray-200 shadow-inner">
                                         <h3 className="font-black text-gray-800 border-b-2 border-gray-200 pb-2 mb-4 text-center">Bahan Spanduk <span className="text-[10px] font-normal block text-gray-500">(/m persegi)</span></h3>
                                         {loc.bannerMaterials?.map((m,i)=>(<div key={i} className="flex justify-between items-center mb-3 bg-white p-3 rounded-xl shadow-sm border border-gray-100"><span className="text-xs font-bold pl-1">{m.name}</span><input type="number" value={m.price} onChange={e=>updateArr('bannerMaterials',i,e.target.value)} className="border p-2 w-24 rounded-lg text-right bg-gray-50 font-mono text-sm font-black text-red-600 outline-none focus:ring-1 focus:ring-red-300"/></div>))}
@@ -849,9 +881,6 @@
                                     <div className="bg-gray-50 rounded-3xl p-5 border border-gray-200 shadow-inner">
                                         <h3 className="font-black text-gray-800 border-b-2 border-gray-200 pb-2 mb-4 text-center">Kertas Stiker <span className="text-[10px] font-normal block text-gray-500">(/lembar dasar)</span></h3>
                                         {loc.stickerPapers?.map((p,i)=>(<div key={i} className="flex justify-between items-center mb-3 bg-white p-3 rounded-xl shadow-sm border border-gray-100"><span className="text-xs font-bold pl-1">{p.name}</span><input type="number" value={p.price} onChange={e=>updateArr('stickerPapers',i,e.target.value)} className="border p-2 w-24 rounded-lg text-right bg-gray-50 font-mono text-sm font-black text-red-600 outline-none focus:ring-1 focus:ring-red-300"/></div>))}
-                                    </div>
-                                    <div className="col-span-full flex justify-end pt-4 border-t border-gray-100 mt-4">
-                                        <button onClick={handleLogout} className="bg-white text-red-600 px-6 py-3 rounded-full font-black border-2 border-red-100 hover:bg-red-50 transition text-sm uppercase tracking-widest"><i className="fas fa-sign-out-alt mr-2"></i> KELUAR SISTEM</button>
                                     </div>
                                 </div>
                             )}
