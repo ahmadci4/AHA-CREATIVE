@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- Meta tags untuk PWA (iOS Support) -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="AHA App">
+    
+    <title>AHA Creative - App</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome & Google Fonts -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    
+    <!-- SheetJS for Excel Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            red: '#D92D20',
+                            black: '#1a1a1a',
+                            gray: '#F3F4F6'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { background-color: #F3F4F6; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .glass-header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(8px);
+        }
+        .receipt-pattern {
+            background-image: radial-gradient(#e5e7eb 1px, transparent 1px);
+            background-size: 10px 10px;
+        }
+        
+        /* Animasi Kepingan (Coin Flip 360) untuk Logo di Halaman Login */
+        @keyframes coinFlip {
+            0% { transform: perspective(600px) rotateY(0deg); }
+            100% { transform: perspective(600px) rotateY(360deg); }
+        }
+        .animate-coin {
+            animation: coinFlip 4s infinite linear;
+            transform-style: preserve-3d;
+        }
+
+        /* Animasi Transisi Halus */
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .deleted-row { background-color: #fee2e2 !important; border-left: 4px solid #ef4444; }
+
+        /* PENGATURAN KHUSUS CETAK NOTA (PRINTER TERMAL & UKURAN FONT BESAR) */
+        @media print {
+            @page { margin: 0; }
+            body { background-color: white !important; margin: 0; padding: 0; }
+            body * { visibility: hidden; }
+            .print-container, .print-container * {
+                visibility: visible;
+            }
+            .print-container {
+                position: absolute;
+                left: 50%;
+                top: 0;
+                transform: translateX(-50%);
+                width: 75mm !important; /* Lebar standar printer termal */
+                max-width: 100% !important;
+                box-shadow: none !important;
+                border: none !important;
+                padding: 10px !important;
+                margin: 0 auto !important;
+                border-radius: 0 !important;
+                color: black !important;
+            }
+            
+            /* Teks Wrap ke bawah agar tidak memanjang */
+            .print-container div, .print-container span, .print-container p {
+                white-space: normal !important;
+                word-wrap: break-word !important;
+            }
+
+            /* Perbesar ukuran font saat dicetak */
+            .print-container .text-\[10px\],
+            .print-container .text-\[11px\],
+            .print-container .text-xs { font-size: 11pt !important; line-height: 1.3 !important; }
+            .print-container .text-sm { font-size: 12pt !important; line-height: 1.3 !important; }
+            .print-container .text-base { font-size: 13pt !important; line-height: 1.3 !important; }
+            .print-container .text-lg { font-size: 15pt !important; line-height: 1.3 !important; }
+            .print-container .text-xl { font-size: 18pt !important; line-height: 1.3 !important; text-align: center; }
+            .print-container .text-2xl, .print-container .text-3xl { font-size: 20pt !important; line-height: 1.3 !important; text-align: center; }
+            
+            .no-print { display: none !important; }
+            .receipt-pattern { background-image: none !important; } /* Hilangkan pola agar tinta hemat & jelas */
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, setDoc, query, orderBy, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyB_DnrzT5sz1i1G-JW4ubQ0MOVSxgwTBqs",
+            authDomain: "ahacrative.firebaseapp.com",
+            projectId: "ahacrative",
+            storageBucket: "ahacrative.firebasestorage.app",
+            messagingSenderId: "295194857507",
+            appId: "1:295194857507:web:ec851b3c6bf8d6c7d3e196"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        const APP_ID = 'aha_business_v1'; 
+        const PUBLIC_PATH = `artifacts/${APP_ID}/public/data`; 
+
+        const formatRupiah = (number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(number);
+        const formatDate = (dateString) => new Date(dateString).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        
+        // Format tanggal KHUSUS NOTA (Tanpa Jam)
+        const formatDateOnly = (dateString) => new Date(dateString).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        
+        const getPeriod = (date) => {
+            const d = new Date(date);
+            return {
+                day: d.toISOString().split('T')[0],
+                week: `${d.getFullYear()}-W${Math.ceil((d.getDate() + 6 - d.getDay()) / 7)}`, 
+                month: `${d.getFullYear()}-${d.getMonth() + 1}`,
+                year: `${d.getFullYear()}`
+            };
+        };
+
+        const App = () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const isCustomerMode = urlParams.get('mode') === 'customer';
+            
+            const [page, setPage] = useState(isCustomerMode ? 'customer' : 'login'); 
+            const [user, setUser] = useState(null); 
+            const [installPrompt, setInstallPrompt] = useState(null);
+            const [dbReady, setDbReady] = useState(false);
+
+            const defaultSettings = {
+                appName: 'AHA Creative', tagline: 'Search Over', ceoName: 'Awaludin',
+                logo: 'logoaha.png', cover: 'bgaha.png',
+                password: 'admin', themeColor: '#D92D20', employees: ['Siti Marketing', 'Budi Desain'],
+                designFee: 20000, premiumFee: 100000,
+                bannerMaterials: [{ name: 'Frontlite (Biasa)', price: 30000 }, { name: 'Kain Bendera', price: 45000 }],
+                standTypes: [{ name: 'Stand Biasa (Besi)', price: 120000 }, { name: 'Stand Kanal/Kayu', price: 150000 }],
+                stickerPapers: [{ name: 'Chromo (Kertas)', price: 15000 }, { name: 'Vinyl (Plastik)', price: 25000 }, { name: 'Transparan', price: 30000 }]
+            };
+
+            const [settings, setSettings] = useState(defaultSettings);
+            const [transactions, setTransactions] = useState([]);
+            const [currentOrder, setCurrentOrder] = useState(null);
+
+            useEffect(() => { signInAnonymously(auth); onAuthStateChanged(auth, (u) => { if (u) setDbReady(true); }); }, []);
+
+            useEffect(() => {
+                if (!dbReady) return;
+                const settingsRef = doc(db, PUBLIC_PATH, 'app_settings', 'main_config');
+                const unsub = onSnapshot(settingsRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        setSettings({
+                            ...defaultSettings, ...data,
+                            bannerMaterials: data.bannerMaterials || defaultSettings.bannerMaterials,
+                            standTypes: data.standTypes || defaultSettings.standTypes,
+                            stickerPapers: data.stickerPapers || defaultSettings.stickerPapers,
+                            employees: data.employees || defaultSettings.employees
+                        });
+                    } else { setDoc(settingsRef, defaultSettings); }
+                });
+                return () => unsub();
+            }, [dbReady]);
+
+            useEffect(() => {
+                if (!dbReady) return;
+                const trxRef = collection(db, PUBLIC_PATH, 'transactions_col');
+                const q = query(trxRef); 
+                const unsub = onSnapshot(q, (snapshot) => {
+                    const loaded = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                    loaded.sort((a, b) => new Date(b.date) - new Date(a.date));
+                    setTransactions(loaded);
+                });
+                return () => unsub();
+            }, [dbReady]);
+
+            const handleSaveSettings = async (newSettings) => {
+                if (!dbReady) return alert("Menghubungkan ke server...");
+                try { await setDoc(doc(db, PUBLIC_PATH, 'app_settings', 'main_config'), newSettings); alert("Pengaturan tersimpan & tersinkron ke semua perangkat!"); } 
+                catch (e) { alert("Gagal menyimpan: " + e.message); }
+            };
+
+            const handleAddTransaction = async (trxData) => {
+                if (!dbReady) return alert("Menghubungkan ke server...");
+                try { await addDoc(collection(db, PUBLIC_PATH, 'transactions_col'), trxData); } 
+                catch (e) { alert("Gagal menyimpan transaksi: " + e.message); }
+            };
+
+            const handleSoftDelete = async (id) => {
+                if (!dbReady) return;
+                if (confirm("Hapus catatan ini dari pembukuan?")) {
+                    try { await updateDoc(doc(db, PUBLIC_PATH, 'transactions_col', id), { isDeleted: true, deletedAt: new Date().toISOString() }); } 
+                    catch (e) { alert("Gagal menghapus: " + e.message); }
+                }
+            };
+
+            useEffect(() => {
+                const getAbsoluteUrl = (url) => {
+                    try {
+                        if (!url) return '';
+                        if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
+                        return new URL(url, window.location.origin + window.location.pathname).href;
+                    } catch (e) { return url || ''; } // Anti Crash URL
+                };
+
+                const logoUrl = getAbsoluteUrl(settings.logo);
+                const manifest = {
+                    name: settings.appName, short_name: "AHA App", start_url: window.location.href, display: "standalone", background_color: "#ffffff", theme_color: settings.themeColor,
+                    icons: [{ src: logoUrl, sizes: "192x192", type: "image/png", purpose: "any maskable" }, { src: logoUrl, sizes: "512x512", type: "image/png", purpose: "any maskable" }]
+                };
+
+                const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                let link = document.querySelector('link[rel="manifest"]');
+                if (!link) { link = document.createElement('link'); link.rel = 'manifest'; document.head.appendChild(link); }
+                link.href = url;
+
+                let iconLink = document.querySelector('link[rel="apple-touch-icon"]');
+                if (!iconLink) { iconLink = document.createElement('link'); iconLink.rel = 'apple-touch-icon'; document.head.appendChild(iconLink); }
+                iconLink.href = logoUrl;
+            }, [settings.appName, settings.themeColor, settings.logo]);
+
+            useEffect(() => {
+                window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); setInstallPrompt(e); });
+            }, []);
+
+            const handleInstallClick = () => {
+                if (installPrompt) { installPrompt.prompt(); installPrompt.userChoice.then((r) => { if (r.outcome === 'accepted') setInstallPrompt(null); }); } 
+                else { alert("Tap menu browser (titik tiga) -> 'Install App' / 'Tambahkan ke Layar Utama'"); }
+            };
+
+            const handleLogout = () => { if(confirm("Keluar dari aplikasi?")) { setUser(null); setPage('login'); } };
+
+            const Login = () => {
+                const [inputPass, setInputPass] = useState('');
+                const [showPass, setShowPass] = useState(false);
+                const [error, setError] = useState('');
+                
+                const doLogin = () => {
+                    if (inputPass === 'developer004') { setUser({ name: 'Developer', role: 'developer' }); setPage('developer_dashboard'); }
+                    else if (inputPass === settings.password) { setUser({ name: 'Admin', role: 'owner' }); setPage('dashboard'); }
+                    else { setError('Sandi salah!'); }
+                };
+
+                return (
+                    <div className="min-h-screen flex items-center justify-center relative bg-white overflow-hidden">
+                        <div className="absolute inset-0 z-0"><img src={settings.cover} onError={(e) => e.target.src='https://via.placeholder.com/800x600/333/fff?text=Cover'} className="w-full h-full object-cover" /><div className="absolute inset-0 bg-white/40 backdrop-blur-sm"></div></div>
+                        <div className="relative z-10 w-full max-w-sm p-8 bg-white/90 backdrop-blur-md rounded-2xl shadow-2xl mx-4 fade-in">
+                            <div className="text-center mb-8">
+                                {/* Tambahan class animate-coin disini */}
+                                <img src={settings.logo} onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} className="w-28 h-28 mx-auto rounded-full shadow-lg mb-4 object-cover bg-white border-2 border-gray-100 animate-coin" />
+                                <h1 className="text-3xl font-black text-gray-800 tracking-tight">{settings.appName}</h1>
+                                <p className="text-sm font-bold text-gray-500 tracking-[0.2em] uppercase mt-1">{settings.tagline}</p>
+                            </div>
+                            <div className="space-y-5">
+                                <div className="relative">
+                                    <input type={showPass?"text":"password"} className="w-full px-5 py-4 rounded-xl border border-gray-300 focus:ring-2 focus:ring-red-500 pr-12 font-medium" placeholder="Kata Sandi" value={inputPass} onChange={e=>setInputPass(e.target.value)} onKeyPress={e=>e.key==='Enter'&&doLogin()}/>
+                                    <button onClick={()=>setShowPass(!showPass)} className="absolute right-4 top-4 text-gray-400 hover:text-gray-700 text-lg"><i className={`fas ${showPass?'fa-eye-slash':'fa-eye'}`}></i></button>
+                                </div>
+                                {error && <p className="text-red-500 text-sm text-center font-bold bg-red-50 py-2 rounded">{error}</p>}
+                                <button onClick={doLogin} className="w-full py-4 rounded-xl font-bold text-white shadow-xl transition transform active:scale-95 text-lg tracking-wide" style={{backgroundColor: settings.themeColor}}>MASUK</button>
+                                {!dbReady && <p className="text-xs text-center text-gray-400 animate-pulse font-medium"><i className="fas fa-spinner fa-spin mr-1"></i>Menghubungkan Database...</p>}
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const Dashboard = () => {
+                const today = new Date().toISOString().split('T')[0];
+                const activeTrx = transactions.filter(t => !t.isDeleted);
+                const income = activeTrx.filter(t => t.date.startsWith(today)).reduce((a, b) => a + b.total, 0);
+                const copyLink = () => {
+                    const url = `${window.location.href.split('?')[0]}?mode=customer`;
+                    navigator.clipboard.writeText(url).then(() => alert("Link Pelanggan Disalin!"));
+                };
+
+                return (
+                    <div className="fade-in space-y-6 p-4 md:p-8">
+                        {installPrompt && <div className="bg-gradient-to-r from-gray-800 to-gray-900 text-white p-5 rounded-2xl flex justify-between items-center shadow-lg"><div><p className="font-bold text-lg">Install Aplikasi</p><p className="text-xs text-gray-300">Akses lebih cepat dari layar utama HP.</p></div><button onClick={handleInstallClick} className="bg-white text-gray-900 px-5 py-2 rounded-xl text-sm font-black shadow hover:bg-gray-100 transition">INSTALL</button></div>}
+                        
+                        <div className="bg-white rounded-2xl p-6 md:p-8 shadow-sm border border-gray-100 relative overflow-hidden group hover:shadow-md transition">
+                            <div className="relative z-10 flex items-center justify-between">
+                                <div>
+                                    <p className="text-gray-500 text-sm font-bold uppercase tracking-wider">Pendapatan Hari Ini</p>
+                                    <h2 className="text-4xl md:text-5xl font-black text-gray-800 mt-2">{formatRupiah(income)}</h2>
+                                    <p className="text-sm font-bold text-green-500 mt-2 bg-green-50 inline-block px-3 py-1 rounded-full"><i className="fas fa-chart-line mr-1"></i> {activeTrx.filter(t => t.date.startsWith(today)).length} Order Masuk</p>
+                                </div>
+                                <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl flex items-center justify-center text-white text-3xl shadow-lg transform group-hover:rotate-12 transition" style={{backgroundColor: settings.themeColor}}>
+                                    <i className="fas fa-wallet"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <button onClick={()=>setPage('calculator')} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center gap-4 active:scale-95 transition hover:bg-blue-50 group">
+                                <div className="w-14 h-14 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-2xl group-hover:scale-110 transition"><i className="fas fa-calculator"></i></div>
+                                <span className="font-bold text-gray-700">Hitung Harga</span>
+                            </button>
+                            <button onClick={()=>setPage('records')} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center gap-4 active:scale-95 transition hover:bg-green-50 group">
+                                <div className="w-14 h-14 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-2xl group-hover:scale-110 transition"><i className="fas fa-book"></i></div>
+                                <span className="font-bold text-gray-700">Pembukuan</span>
+                            </button>
+                            <button onClick={copyLink} className="bg-gradient-to-br from-purple-500 to-indigo-600 text-white p-6 rounded-2xl shadow-md flex flex-col items-center gap-3 active:scale-95 transition group">
+                                <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center text-2xl group-hover:scale-110 transition"><i className="fas fa-share-alt"></i></div>
+                                <span className="font-bold text-sm text-center">Share Link Order</span>
+                            </button>
+                            <button onClick={()=>setPage('about')} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 text-gray-600 active:scale-95 transition hover:bg-orange-50 group">
+                                <div className="w-12 h-12 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-2xl group-hover:scale-110 transition"><i className="fas fa-info-circle"></i></div>
+                                <span className="font-bold text-sm text-center">Tentang</span>
+                            </button>
+                        </div>
+                    </div>
+                );
+            };
+
+            const Calculator = () => {
+                const [tab, setTab] = useState('spanduk');
+                const [data, setData] = useState({ 
+                    name: '', qty: 1, design: false, rush: false, loc: 'Bayan', w: '', h: '', wUnit: 'm', hUnit: 'm', 
+                    mat: settings.bannerMaterials?.[0]?.name || 'Biasa', 
+                    stand: false, 
+                    standType: settings.standTypes?.[0]?.name || 'Biasa', 
+                    grommet: true, 
+                    stPaper: settings.stickerPapers?.[0]?.name || 'Chromo', 
+                    stW: '', stH: '' 
+                });
+
+                const total = useMemo(() => {
+                    let price = 0;
+                    const isPremium = data.rush && data.loc === 'Bayan';
+                    const rushFee = isPremium ? settings.premiumFee : 0;
+                    const designFee = data.design ? (isPremium ? 0 : 20000) : 0; 
+
+                    if (tab === 'spanduk') {
+                        let w = parseFloat(data.w)||0, h = parseFloat(data.h)||0;
+                        if(data.wUnit==='cm') w/=100; if(data.wUnit==='mm') w/=1000;
+                        if(data.hUnit==='cm') h/=100; if(data.hUnit==='mm') h/=1000;
+                        const area = w*h;
+                        const matPrice = (settings.bannerMaterials?.find(m=>m.name===data.mat)?.price || 0) * area;
+                        const standPrice = data.stand ? (settings.standTypes?.find(s=>s.name===data.standType)?.price || 0) : 0;
+                        price = (matPrice * data.qty) + (standPrice * data.qty);
+                    } else {
+                        let w = parseFloat(data.stW)||0, h = parseFloat(data.stH)||0; 
+                        let areaM = (w/100)*(h/100);
+                        const paperPrice = (settings.stickerPapers?.find(p=>p.name===data.stPaper)?.price || 0) * areaM;
+                        price = paperPrice * data.qty;
+                    }
+                    return Math.ceil(price + designFee + rushFee);
+                }, [data, tab, settings]);
+
+                const submit = (isDemo = false) => {
+                    if(!data.name) return alert("Nama wajib diisi");
+                    let details = tab === 'spanduk' 
+                        ? `Spanduk ${data.mat} (${data.w}${data.wUnit}x${data.h}${data.hUnit})` + (data.stand ? ` + ${data.standType}` : '') 
+                        : `Stiker ${data.stPaper} (${data.stW}x${data.stH}cm)`;
+                    
+                    const newTrx = {
+                        id: (isDemo ? 'DEMO-' : 'TRX-') + Date.now().toString().slice(-6),
+                        date: new Date().toISOString(),
+                        customerName: data.name + (isDemo ? ' (DEMO)' : ''),
+                        details: `${details} (${data.qty} pcs)`,
+                        total: total,
+                        isDeleted: false,
+                        items: { ...data, tab }
+                    };
+                    
+                    if (!isDemo) { handleAddTransaction(newTrx); }
+                    setCurrentOrder(newTrx);
+                    setPage('receipt');
+                };
+
+                return (
+                    <div className="fade-in bg-white rounded-2xl shadow-sm border border-gray-100 p-6 m-4 md:m-8">
+                        <div className="flex gap-2 mb-6 bg-gray-50 p-1 rounded-xl">
+                            <button onClick={()=>setTab('spanduk')} className={`flex-1 py-3 font-bold rounded-lg transition ${tab==='spanduk'?'bg-white text-red-600 shadow-sm':'text-gray-400'}`}>Spanduk</button>
+                            <button onClick={()=>setTab('stiker')} className={`flex-1 py-3 font-bold rounded-lg transition ${tab==='stiker'?'bg-white text-red-600 shadow-sm':'text-gray-400'}`}>Stiker</button>
+                        </div>
+                        <div className="space-y-5">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Nama Pelanggan</label>
+                                <input type="text" className="w-full border p-4 rounded-xl bg-gray-50 focus:bg-white transition" placeholder="Cth: Bpk. Budi" value={data.name} onChange={e=>setData({...data, name: e.target.value})} />
+                            </div>
+
+                            {tab === 'spanduk' ? (
+                                <>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Panjang</label><div className="flex border rounded-xl bg-gray-50 focus-within:bg-white overflow-hidden"><input type="number" className="w-full p-4 outline-none bg-transparent" placeholder="0" value={data.w} onChange={e=>setData({...data, w:e.target.value})} /><select className="bg-gray-200 px-3 text-sm font-bold border-l" value={data.wUnit} onChange={e=>setData({...data, wUnit:e.target.value})}><option value="m">m</option><option value="cm">cm</option></select></div></div>
+                                        <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Lebar</label><div className="flex border rounded-xl bg-gray-50 focus-within:bg-white overflow-hidden"><input type="number" className="w-full p-4 outline-none bg-transparent" placeholder="0" value={data.h} onChange={e=>setData({...data, h:e.target.value})} /><select className="bg-gray-200 px-3 text-sm font-bold border-l" value={data.hUnit} onChange={e=>setData({...data, hUnit:e.target.value})}><option value="m">m</option><option value="cm">cm</option></select></div></div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Pilih Bahan</label>
+                                        <select className="w-full border p-4 rounded-xl bg-gray-50" value={data.mat} onChange={e=>setData({...data, mat:e.target.value})}>
+                                            {settings.bannerMaterials?.map(m=><option key={m.name} value={m.name}>{m.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="p-4 border rounded-xl bg-gray-50">
+                                        <label className="flex items-center cursor-pointer"><input type="checkbox" className="mr-3 w-5 h-5 accent-red-600" checked={data.stand} onChange={e=>setData({...data, stand:e.target.checked})}/> <span className="font-bold text-gray-700">Gunakan Stand Banner</span></label>
+                                        {data.stand && <select className="w-full mt-4 border p-3 rounded-lg bg-white" value={data.standType} onChange={e=>setData({...data, standType:e.target.value})}>{settings.standTypes?.map(s=><option key={s.name} value={s.name}>{s.name} (+{formatRupiah(s.price)})</option>)}</select>}
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Panjang (cm)</label><input type="number" className="w-full border p-4 rounded-xl bg-gray-50" placeholder="0" value={data.stW} onChange={e=>setData({...data, stW:e.target.value})} /></div>
+                                        <div><label className="block text-xs font-bold text-gray-500 uppercase mb-2">Lebar (cm)</label><input type="number" className="w-full border p-4 rounded-xl bg-gray-50" placeholder="0" value={data.stH} onChange={e=>setData({...data, stH:e.target.value})} /></div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Jenis Kertas</label>
+                                        <select className="w-full border p-4 rounded-xl bg-gray-50" value={data.stPaper} onChange={e=>setData({...data, stPaper:e.target.value})}>{settings.stickerPapers?.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}</select>
+                                    </div>
+                                </>
+                            )}
+                            
+                            <div className="flex items-center justify-between bg-gray-100 p-2 rounded-xl">
+                                <span className="text-sm font-bold text-gray-600 pl-4 uppercase">Kuantitas (Qty)</span>
+                                <div className="flex items-center bg-white rounded-lg shadow-sm border overflow-hidden">
+                                    <button onClick={()=>setData({...data, qty:Math.max(1,data.qty-1)})} className="px-5 py-3 hover:bg-gray-50 font-black text-gray-500">-</button>
+                                    <span className="px-4 py-3 font-black text-lg min-w-[3rem] text-center">{data.qty}</span>
+                                    <button onClick={()=>setData({...data, qty:data.qty+1})} className="px-5 py-3 hover:bg-gray-50 font-black text-gray-500">+</button>
+                                </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 gap-3">
+                                <label className="flex justify-between items-center p-4 border border-gray-200 rounded-xl hover:bg-gray-50 cursor-pointer transition">
+                                    <div>
+                                        <span className="font-bold block text-gray-800">Jasa Desain</span>
+                                        <span className="text-xs font-medium text-gray-500">Flat: Rp 20.000 / pesanan</span>
+                                        {(data.rush&&data.loc==='Bayan'&&data.design)&&<span className="block text-xs text-green-600 font-bold mt-1 bg-green-50 px-2 py-1 rounded inline-block"><i className="fas fa-check mr-1"></i>Gratis (Layanan Premium)</span>}
+                                    </div>
+                                    <input type="checkbox" checked={data.design} onChange={e=>setData({...data, design:e.target.checked})} className="w-6 h-6 accent-red-600"/>
+                                </label>
+                                <label className="flex justify-between items-center p-4 border border-yellow-300 bg-yellow-50 rounded-xl cursor-pointer transition hover:bg-yellow-100">
+                                    <div>
+                                        <span className="font-black text-yellow-800 block"><i className="fas fa-bolt mr-1"></i> Layanan Premium (Kilat)</span>
+                                        <span className="text-xs font-bold text-yellow-700">+{formatRupiah(settings.premiumFee)} (Area Bayan)</span>
+                                    </div>
+                                    <input type="checkbox" checked={data.rush} onChange={e=>setData({...data, rush:e.target.checked})} className="w-6 h-6 accent-yellow-600"/>
+                                </label>
+                            </div>
+                            
+                            <div className="bg-gray-900 text-white p-6 rounded-2xl flex flex-col md:flex-row justify-between items-center gap-4 shadow-xl mt-4">
+                                <div className="text-center md:text-left w-full md:w-auto">
+                                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Estimasi</p>
+                                    <p className="text-4xl font-black mt-1">{formatRupiah(total)}</p>
+                                </div>
+                                <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                                    <button onClick={() => submit(true)} className="bg-gray-700 text-gray-200 border border-gray-600 px-6 py-4 rounded-xl font-bold hover:bg-gray-600 transition">Cetak Demo</button>
+                                    <button onClick={() => submit(false)} className="bg-white text-gray-900 px-8 py-4 rounded-xl font-black hover:bg-gray-100 transition shadow-lg">SIMPAN & CETAK</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const Receipt = () => {
+                if (!currentOrder) return null;
+                return (
+                    <div className="fade-in p-4 md:p-8 flex justify-center">
+                        <div className="print-container bg-white p-6 rounded-xl shadow-2xl w-full max-w-[320px] relative border border-gray-200">
+                            <div className="text-center border-b-2 border-dashed border-gray-400 pb-4 mb-4">
+                                <img src={settings.logo} className="w-16 h-16 mx-auto mb-2 grayscale opacity-90 object-cover rounded-full border border-gray-200" onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} />
+                                <h2 className="text-xl font-black uppercase tracking-widest text-black">{settings.appName}</h2>
+                                <p className="text-[10px] font-bold tracking-[0.3em] uppercase text-black mt-1">{settings.tagline}</p>
+                                <p className="text-[10px] text-gray-800 font-bold mt-2">CEO: {settings.ceoName}</p>
+                            </div>
+                            
+                            <div className="space-y-1 mb-4 font-mono text-[11px] font-bold text-black border-b border-gray-200 pb-4">
+                                <div className="flex justify-between"><span>No. TRX:</span><span>{currentOrder.id}</span></div>
+                                <div className="flex justify-between"><span>Tanggal:</span><span>{formatDateOnly(currentOrder.date)}</span></div>
+                                <div className="flex justify-between"><span>Pelanggan:</span><span className="text-right whitespace-normal break-words pl-4">{currentOrder.customerName}</span></div>
+                            </div>
+                            
+                            <div className="border-b-2 border-dashed border-gray-400 pb-4 mb-4">
+                                <div className="flex justify-between font-black mb-2 text-xs uppercase text-black"><span>Pesanan</span><span>Total</span></div>
+                                <div className="flex justify-between text-[11px] font-bold text-black items-start gap-3">
+                                    <span className="flex-1 whitespace-normal break-words leading-tight">{currentOrder.details}</span>
+                                    <span className="whitespace-nowrap">{formatRupiah(currentOrder.total)}</span>
+                                </div>
+                            </div>
+                            
+                            <div className="flex justify-between items-center mb-6">
+                                <span className="text-sm font-black text-black">TOTAL</span>
+                                <span className="text-lg font-black text-black">{formatRupiah(currentOrder.total)}</span>
+                            </div>
+
+                            <div className="text-center text-[10px] text-black font-bold uppercase tracking-wide border-t border-gray-200 pt-4">
+                                <p>Terima kasih atas pesanan Anda</p>
+                                <p className="mt-1">AHA Creative - Solusi Cetak Anda</p>
+                            </div>
+
+                            {/* Watermark Lunas */}
+                            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 -rotate-12 border-4 border-black text-black px-4 py-2 font-black text-2xl opacity-10 rounded-lg uppercase tracking-widest pointer-events-none">LUNAS</div>
+                        </div>
+                        
+                        <div className="mt-8 flex gap-3 justify-center w-full max-w-[320px] mx-auto absolute bottom-4 left-0 right-0 no-print">
+                            <button onClick={() => setPage('dashboard')} className="flex-1 bg-gray-800 text-white py-4 rounded-xl shadow-lg font-bold hover:bg-gray-700"><i className="fas fa-home mr-2"></i> Home</button>
+                            <button onClick={()=>window.print()} className="flex-1 bg-blue-600 text-white py-4 rounded-xl shadow-lg font-bold hover:bg-blue-700"><i className="fas fa-print mr-2"></i> Cetak</button>
+                        </div>
+                    </div>
+                );
+            };
+
+            const Records = () => {
+                const [filter, setFilter] = useState('daily');
+                const filteredData = transactions.filter(t => {
+                    if (t.isDeleted) return false;
+                    const d = getPeriod(t.date), p = getPeriod(new Date());
+                    if(filter==='daily') return d.day===p.day;
+                    if(filter==='weekly') return d.week===p.week;
+                    if(filter==='monthly') return d.month===p.month;
+                    return d.year===p.year;
+                });
+                const total = filteredData.reduce((a, b) => a + b.total, 0);
+                const exportXLS = () => { const ws = XLSX.utils.json_to_sheet(filteredData); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Rekap"); XLSX.writeFile(wb, `Laporan_${filter}.xlsx`); };
+
+                return (
+                    <div className="fade-in p-4 md:p-8">
+                        <div className="bg-white p-5 sticky top-0 z-10 shadow-sm border border-gray-100 mb-6 rounded-2xl">
+                            <div className="flex gap-2 overflow-x-auto pb-3 border-b border-gray-100 mb-4 hide-scrollbar">
+                                {['daily','weekly','monthly','yearly'].map(f=><button key={f} onClick={()=>setFilter(f)} className={`px-6 py-2 rounded-full text-sm font-bold transition ${filter===f?'bg-red-500 text-white shadow-md':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{f.toUpperCase()}</button>)}
+                            </div>
+                            <div className="flex justify-between items-center bg-gray-900 text-white p-5 rounded-xl shadow-lg">
+                                <div><p className="text-xs uppercase text-gray-400 font-bold mb-1">Total Pendapatan</p><p className="text-2xl font-black">{formatRupiah(total)}</p></div>
+                                <button onClick={exportXLS} className="bg-white text-green-600 px-4 py-2 rounded-lg font-bold hover:bg-gray-100 transition shadow"><i className="fas fa-file-excel mr-2"></i> Export</button>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {filteredData.length===0 ? <div className="col-span-full text-center py-12 bg-white rounded-2xl border border-dashed border-gray-300"><i className="fas fa-folder-open text-4xl text-gray-300 mb-3 block"></i><p className="text-gray-500 font-bold">Belum ada data transaksi.</p></div> : filteredData.map(t=>(
+                                <div key={t.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition">
+                                    <div className="flex-1 pr-4">
+                                        <p className="font-bold text-gray-800 text-lg mb-1">{t.customerName}</p>
+                                        <p className="text-xs text-gray-500 font-medium leading-relaxed">{t.details}</p>
+                                        <p className="text-[10px] text-gray-400 mt-2 font-mono"><i className="far fa-clock mr-1"></i>{formatDate(t.date)}</p>
+                                    </div>
+                                    <div className="flex flex-col items-end justify-between h-full border-l border-gray-100 pl-4">
+                                        <p className="font-black text-red-600 text-lg">{formatRupiah(t.total)}</p>
+                                        <button onClick={()=>handleSoftDelete(t.id)} className="text-red-400 hover:text-red-600 text-xs font-bold mt-4 bg-red-50 px-3 py-1 rounded-full"><i className="fas fa-trash mr-1"></i> Hapus</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
+            const DeveloperDashboard = () => {
+                const deleted = transactions.filter(t => t.isDeleted);
+                return (<div className="fade-in p-4 md:p-8"><div className="bg-gray-900 text-white p-6 rounded-2xl shadow-xl mb-6 border border-gray-700"><h2 className="text-2xl font-black"><i className="fas fa-user-secret mr-3 text-red-500"></i>Mode Developer</h2><p className="text-sm text-gray-400 mt-1">Audit Trail - Transaksi Dihapus</p></div><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{deleted.map(t=>(<div key={t.id} className="bg-red-50 p-5 rounded-2xl border-l-4 border-red-500 flex justify-between items-center shadow-sm"><div><p className="font-bold text-gray-800">{t.customerName} <span className="text-xs bg-red-600 text-white px-2 py-1 rounded ml-2 font-bold uppercase">Terhapus</span></p><p className="text-xs text-gray-600 mt-1">{t.details}</p><p className="text-[10px] text-gray-400 mt-2 font-mono">{formatDate(t.date)}</p></div><p className="font-black text-red-700 line-through text-lg opacity-50">{formatRupiah(t.total)}</p></div>))}</div></div>);
+            };
+
+            const Settings = () => {
+                const [localSet, setLocalSet] = useState({...settings});
+                const [emp, setEmp] = useState('');
+                const save = () => handleSaveSettings(localSet);
+                const fileHandler = (e, k) => { const f=e.target.files[0]; if(f){ const r=new FileReader(); r.onloadend=()=>setLocalSet({...localSet, [k]:r.result}); r.readAsDataURL(f); }};
+                const updateArr = (k, i, v) => { const arr=[...localSet[k]]; arr[i].price=parseInt(v)||0; setLocalSet({...localSet, [k]:arr}); };
+                
+                // Perbaikan Fungsi Tambah Karyawan (BUG FIXED)
+                const addEmployee = () => { 
+                    if(emp.trim()) { 
+                        setLocalSet({...localSet, employees: [...(localSet.employees || []), emp.trim()]}); 
+                        setEmp(''); 
+                    } 
+                };
+                
+                const removeEmployee = (idx) => { const updated = [...localSet.employees]; updated.splice(idx, 1); setLocalSet({...localSet, employees: updated}); };
+
+                return (
+                    <div className="fade-in p-4 md:p-8">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-2xl font-black text-gray-800">Pengaturan Aplikasi</h2>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white p-6 md:p-8 rounded-3xl shadow-lg border border-gray-100">
+                            <div className="space-y-6">
+                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                    <label className="text-xs font-black text-gray-500 block mb-3 uppercase tracking-wider">Logo Perusahaan</label>
+                                    <input type="file" accept="image/*" onChange={e=>fileHandler(e,'logo')} className="w-full text-sm mb-3"/>
+                                    <div className="bg-white p-3 rounded-lg border border-gray-200 inline-block shadow-sm">
+                                        {localSet.logo && <img src={localSet.logo} onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} className="h-16 w-16 object-contain rounded-full"/>}
+                                    </div>
+                                </div>
+                                
+                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                    <label className="text-xs font-black text-gray-500 block mb-3 uppercase tracking-wider">Foto Sampul (Cover)</label>
+                                    <input type="file" accept="image/*" onChange={e=>fileHandler(e,'cover')} className="w-full text-sm mb-3"/>
+                                    {localSet.cover && <img src={localSet.cover} onError={(e) => e.target.src='https://via.placeholder.com/800x600/333/fff?text=Cover'} className="h-24 w-full border object-cover rounded-lg shadow-sm"/>}
+                                </div>
+                                
+                                <div>
+                                    <label className="text-xs font-black text-gray-500 block mb-2 uppercase tracking-wider">Nama Direktur / CEO</label>
+                                    <input type="text" className="w-full border p-4 rounded-xl bg-gray-50 focus:bg-white font-bold" value={localSet.ceoName} onChange={e=>setLocalSet({...localSet, ceoName:e.target.value})} />
+                                </div>
+
+                                <div>
+                                    <h3 className="font-black text-gray-800 border-b-2 border-red-500 inline-block pb-1 mb-4">Manajemen Tim Kreatif</h3>
+                                    <div className="flex gap-2 mb-4">
+                                        <input type="text" value={emp} onChange={e=>setEmp(e.target.value)} placeholder="Ketik nama tim..." className="border p-3 flex-1 rounded-xl text-sm bg-gray-50 focus:bg-white"/>
+                                        <button onClick={addEmployee} className="bg-green-500 hover:bg-green-600 transition text-white px-5 rounded-xl font-bold shadow-md"><i className="fas fa-plus"></i></button>
+                                    </div>
+                                    <ul className="space-y-2">
+                                        {localSet.employees?.map((e,i)=>(
+                                            <li key={i} className="flex justify-between items-center bg-white p-3 rounded-xl text-sm border border-gray-100 shadow-sm font-bold text-gray-700">
+                                                <span><i className="fas fa-user-circle text-gray-300 mr-2"></i>{e}</span>
+                                                <button onClick={()=>removeEmployee(i)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition"><i className="fas fa-times"></i></button>
+                                            </li>
+                                        ))}
+                                        {(!localSet.employees || localSet.employees.length === 0) && <p className="text-xs text-gray-400 italic">Belum ada tim yang ditambahkan.</p>}
+                                    </ul>
+                                </div>
+                            </div>
+                            
+                            <div className="space-y-6">
+                                <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                                    <h3 className="font-black text-gray-800 border-b pb-3 mb-4">Harga Bahan Spanduk <span className="text-xs font-normal text-gray-400">(per Meter)</span></h3>
+                                    {localSet.bannerMaterials?.map((m,i)=>(
+                                        <div key={i} className="flex justify-between items-center mb-3">
+                                            <span className="text-sm font-bold text-gray-600">{m.name}</span>
+                                            <input type="number" value={m.price} onChange={e=>updateArr('bannerMaterials',i,e.target.value)} className="border p-2 w-28 rounded-lg text-right bg-gray-50 font-mono text-sm"/>
+                                        </div>
+                                    ))}
+                                </div>
+                                
+                                <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                                    <h3 className="font-black text-gray-800 border-b pb-3 mb-4">Harga Stand Banner <span className="text-xs font-normal text-gray-400">(per Pcs)</span></h3>
+                                    {localSet.standTypes?.map((s,i)=>(
+                                        <div key={i} className="flex justify-between items-center mb-3">
+                                            <span className="text-sm font-bold text-gray-600">{s.name}</span>
+                                            <input type="number" value={s.price} onChange={e=>updateArr('standTypes',i,e.target.value)} className="border p-2 w-28 rounded-lg text-right bg-gray-50 font-mono text-sm"/>
+                                        </div>
+                                    ))}
+                                </div>
+                                
+                                <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                                    <h3 className="font-black text-gray-800 border-b pb-3 mb-4">Harga Kertas Stiker <span className="text-xs font-normal text-gray-400">(Dasar)</span></h3>
+                                    {localSet.stickerPapers?.map((p,i)=>(
+                                        <div key={i} className="flex justify-between items-center mb-3">
+                                            <span className="text-sm font-bold text-gray-600">{p.name}</span>
+                                            <input type="number" value={p.price} onChange={e=>updateArr('stickerPapers',i,e.target.value)} className="border p-2 w-28 rounded-lg text-right bg-gray-50 font-mono text-sm"/>
+                                        </div>
+                                    ))}
+                                </div>
+                                
+                                <div className="pt-4 mt-8 space-y-3">
+                                    <button onClick={save} className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black shadow-xl text-lg hover:bg-blue-700 transition transform active:scale-95"><i className="fas fa-cloud-upload-alt mr-2"></i> SIMPAN PENGATURAN</button>
+                                    <button onClick={handleLogout} className="w-full bg-white text-red-600 py-4 rounded-2xl font-bold border-2 border-red-100 hover:bg-red-50 transition"><i className="fas fa-sign-out-alt mr-2"></i> KELUAR</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const About = () => (
+                <div className="fade-in pb-24 md:p-8">
+                    <div className="bg-white md:rounded-3xl overflow-hidden shadow-2xl border border-gray-100 max-w-4xl mx-auto">
+                        <div className="relative h-64 md:h-[400px]">
+                            <img src={settings.cover} onError={(e) => e.target.src='https://via.placeholder.com/800x600/333/fff?text=Cover'} className="w-full h-full object-cover"/>
+                            <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/60 to-transparent flex items-end p-8 md:p-12">
+                                <div className="text-white flex items-center gap-6">
+                                    <img src={settings.logo} className="w-24 h-24 md:w-32 md:h-32 rounded-full border-4 border-white shadow-2xl object-cover bg-white animate-coin"/>
+                                    <div>
+                                        <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-none mb-2">{settings.appName}</h1>
+                                        <p className="opacity-90 font-bold tracking-[0.3em] uppercase text-sm md:text-base text-red-400">{settings.tagline}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="p-6 md:p-12 grid grid-cols-1 md:grid-cols-2 gap-10">
+                            <div className="space-y-8">
+                                <div>
+                                    <h3 className="font-black text-2xl mb-6 text-gray-800 border-b-4 border-red-500 inline-block pb-2">Struktur Perusahaan</h3>
+                                    
+                                    <div className="flex items-center p-5 bg-gradient-to-r from-red-50 to-white rounded-2xl mb-6 border border-red-100 shadow-sm">
+                                        <div className="w-16 h-16 bg-red-600 text-white rounded-full flex items-center justify-center mr-5 font-black text-xl shadow-lg shadow-red-200">CEO</div>
+                                        <div><p className="font-black text-gray-900 text-xl">{settings.ceoName}</p><p className="text-sm text-red-600 font-bold tracking-widest uppercase mt-1">Founder & Director</p></div>
+                                    </div>
+                                    
+                                    <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100">
+                                        <p className="font-black text-sm text-gray-400 mb-4 uppercase tracking-widest border-b pb-2"><i className="fas fa-users mr-2"></i>Tim Kreatif AHA</p>
+                                        <div className="grid gap-3">
+                                            {settings.employees?.map(e=><div key={e} className="flex items-center bg-white p-4 rounded-xl shadow-sm border border-gray-100 font-bold text-gray-700 text-lg"><div className="w-10 h-10 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center mr-4"><i className="fas fa-user-astronaut"></i></div>{e}</div>)}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="space-y-8">
+                                <div>
+                                    <h3 className="font-black text-2xl mb-6 text-gray-800 border-b-4 border-red-500 inline-block pb-2">Hubungi Kami</h3>
+                                    <ul className="space-y-4">
+                                        <li className="flex items-center p-5 bg-white shadow-sm rounded-2xl border border-gray-100 hover:shadow-md transition"><div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mr-5 text-xl"><i className="fas fa-envelope"></i></div><span className="font-bold text-gray-700 text-lg">ahacreativ@gmail.com</span></li>
+                                        <li className="flex items-center p-5 bg-white shadow-sm rounded-2xl border border-gray-100 hover:shadow-md transition"><div className="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center mr-5 text-xl"><i className="fab fa-whatsapp"></i></div><span className="font-bold text-gray-700 text-lg">+62 819-1732-3268</span></li>
+                                        <li className="flex items-center p-5 bg-white shadow-sm rounded-2xl border border-gray-100 hover:shadow-md transition"><div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-5 text-xl"><i className="fas fa-map-marker-alt"></i></div><span className="font-bold text-gray-700 text-lg">Kec. Bayan, Lombok Utara</span></li>
+                                    </ul>
+                                </div>
+                                <div className="bg-gray-900 text-white p-8 rounded-3xl shadow-2xl relative overflow-hidden mt-8 transform hover:scale-[1.02] transition duration-300">
+                                    <div className="absolute -right-6 -top-6 opacity-10"><i className="fas fa-code text-9xl"></i></div>
+                                    <h3 className="font-bold text-xs text-gray-400 uppercase tracking-[0.3em] mb-2">System Developer</h3>
+                                    <p className="font-black text-3xl text-white mb-1">Ahmad Yani</p>
+                                    <p className="text-sm font-medium text-gray-400 mb-8"><i className="fas fa-laptop-code mr-2"></i>Fullstack Web Developer</p>
+                                    <a href="https://wa.me/6285956684081" target="_blank" className="inline-block w-full text-center bg-gradient-to-r from-green-400 to-green-600 text-white px-6 py-4 rounded-xl font-black shadow-lg hover:shadow-green-500/30 transition text-sm tracking-wide uppercase"><i className="fab fa-whatsapp text-white mr-2 text-lg"></i>Hubungi Developer</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+
+            // DESAIN RESPONSIF UNTUK DESKTOP & MOBILE
+            const Layout = ({ children }) => (
+                <div className="flex flex-col h-screen bg-gray-200 w-full md:max-w-5xl lg:max-w-7xl mx-auto md:shadow-2xl relative overflow-hidden text-gray-800">
+                    {!isCustomerMode && page!=='login' && (
+                        <div className="flex-none z-40 bg-white/90 backdrop-blur-xl px-6 py-4 flex justify-between items-center shadow-sm w-full border-b border-gray-200">
+                            <div className="flex items-center gap-4">
+                                <img src={settings.logo} onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} className="w-12 h-12 rounded-full border border-gray-200 shadow-sm object-cover"/>
+                                <div>
+                                    <span className="font-black text-xl block leading-none text-gray-800">{settings.appName}</span>
+                                    <span className="text-[10px] text-red-600 font-black tracking-[0.2em] uppercase">{settings.tagline}</span>
+                                </div>
+                            </div>
+                            <div className="flex gap-5 items-center">
+                                {!dbReady&&<span className="text-xs bg-red-100 text-red-600 px-3 py-1.5 rounded-full font-bold animate-pulse"><i className="fas fa-wifi mr-1"></i> Offline</span>}
+                                {dbReady&&<span className="text-xs bg-green-50 text-green-600 px-3 py-1.5 rounded-full font-bold hidden md:inline-block border border-green-200"><i className="fas fa-cloud text-green-500 mr-1"></i> Tersambung</span>}
+                                <button onClick={()=>setPage('settings')} className="text-gray-400 hover:text-gray-900 text-2xl transition transform hover:rotate-90"><i className="fas fa-cog"></i></button>
+                                <button onClick={handleLogout} className="text-red-400 hover:text-red-600 text-2xl transition ml-2"><i className="fas fa-power-off"></i></button>
+                            </div>
+                        </div>
+                    )}
+                    
+                    <div className="flex-1 overflow-y-auto hide-scrollbar relative bg-gray-100 w-full">
+                        {children}
+                    </div>
+
+                    {!isCustomerMode && page!=='login' && page!=='receipt' && (
+                        <div className="flex-none bg-white border-t border-gray-200 flex justify-around py-4 pb-safe z-40 text-xs font-black text-gray-400 w-full shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)]">
+                            <button onClick={()=>setPage('dashboard')} className={`flex flex-col items-center gap-1.5 transition duration-300 w-1/4 ${page==='dashboard'?'text-red-600 transform scale-110':'hover:text-gray-600'}`}><i className="fas fa-home text-2xl mb-1"></i>HOME</button>
+                            <button onClick={()=>setPage('calculator')} className={`flex flex-col items-center gap-1.5 transition duration-300 w-1/4 ${page==='calculator'?'text-red-600 transform scale-110':'hover:text-gray-600'}`}><i className="fas fa-calculator text-2xl mb-1"></i>HITUNG</button>
+                            <button onClick={()=>setPage('records')} className={`flex flex-col items-center gap-1.5 transition duration-300 w-1/4 ${page==='records'?'text-red-600 transform scale-110':'hover:text-gray-600'}`}><i className="fas fa-chart-pie text-2xl mb-1"></i>REKAP</button>
+                            <button onClick={()=>setPage('about')} className={`flex flex-col items-center gap-1.5 transition duration-300 w-1/4 ${page==='about'?'text-red-600 transform scale-110':'hover:text-gray-600'}`}><i className="fas fa-info-circle text-2xl mb-1"></i>INFO</button>
+                        </div>
+                    )}
+                </div>
+            );
+
+            if (page === 'login') return <Login />;
+            if (page === 'customer') return <Layout><CustomerForm /></Layout>;
+
+            return (
+                <Layout>
+                    {page === 'dashboard' && <Dashboard />}
+                    {page === 'calculator' && <Calculator />}
+                    {page === 'receipt' && <Receipt />}
+                    {page === 'records' && <Records />}
+                    {page === 'settings' && <Settings />}
+                    {page === 'about' && <About />}
+                    {page === 'developer_dashboard' && <DeveloperDashboard />}
+                </Layout>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
