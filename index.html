@@ -71,9 +71,15 @@
 
         /* Animasi Transisi Halus */
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        .fade-in-up { animation: fadeInUp 0.8s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
         
         .deleted-row { background-color: #fee2e2 !important; border-left: 4px solid #ef4444; }
+
+        /* Kartu Katalog Hover */
+        .service-card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .service-card:hover { transform: translateY(-10px); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); }
 
         /* PENGATURAN KHUSUS CETAK NOTA (PRINTER TERMAL & UKURAN FONT BESAR) */
         @media print {
@@ -119,7 +125,7 @@
         }
     </style>
 </head>
-<body>
+<body class="text-gray-800 antialiased">
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
@@ -146,10 +152,7 @@
 
         const formatRupiah = (number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(number);
         const formatDate = (dateString) => new Date(dateString).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        
-        // Format tanggal KHUSUS NOTA (Tanpa Jam)
         const formatDateOnly = (dateString) => new Date(dateString).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-        
         const getPeriod = (date) => {
             const d = new Date(date);
             return {
@@ -162,13 +165,16 @@
 
         const App = () => {
             const urlParams = new URLSearchParams(window.location.search);
-            const isCustomerMode = urlParams.get('mode') === 'customer';
+            const mode = urlParams.get('mode');
+            // Halaman default diubah menjadi 'catalog'
+            const initialPage = mode === 'customer' ? 'customer' : 'catalog';
             
-            const [page, setPage] = useState(isCustomerMode ? 'customer' : 'login'); 
+            const [page, setPage] = useState(initialPage); 
             const [user, setUser] = useState(null); 
             const [installPrompt, setInstallPrompt] = useState(null);
             const [dbReady, setDbReady] = useState(false);
 
+            // DEFAULT SETTINGS DENGAN KATALOG
             const defaultSettings = {
                 appName: 'AHA Creative', tagline: 'Search Over', ceoName: 'Awaludin',
                 logo: 'logoaha.png', cover: 'bgaha.png',
@@ -176,7 +182,12 @@
                 designFee: 20000, premiumFee: 100000,
                 bannerMaterials: [{ name: 'Frontlite (Biasa)', price: 30000 }, { name: 'Kain Bendera', price: 45000 }],
                 standTypes: [{ name: 'Stand Biasa (Besi)', price: 120000 }, { name: 'Stand Kanal/Kayu', price: 150000 }],
-                stickerPapers: [{ name: 'Chromo (Kertas)', price: 15000 }, { name: 'Vinyl (Plastik)', price: 25000 }, { name: 'Transparan', price: 30000 }]
+                stickerPapers: [{ name: 'Chromo (Kertas)', price: 15000 }, { name: 'Vinyl (Plastik)', price: 25000 }, { name: 'Transparan', price: 30000 }],
+                catalogItems: [
+                    { id: 1, title: 'Spanduk Frontlite', desc: 'Bahan standar (Flexi 280gr). Cocok untuk spanduk toko, baliho, dan event outdoor.', priceLabel: 'Mulai Dari', priceValue: 'Rp 30.000', priceUnit: '/m²', badge: 'Best Seller', image: 'https://images.unsplash.com/photo-1559589689-577aabd1ce4c?auto=format&fit=crop&q=80&w=800' },
+                    { id: 2, title: 'Spanduk Kain / Bendera', desc: 'Bahan kain TC Import. Cocok untuk bendera komunitas, umbul-umbul, dan pecel lele.', priceLabel: 'Mulai Dari', priceValue: 'Rp 45.000', priceUnit: '/m²', badge: '', image: 'https://images.unsplash.com/photo-1513151233558-d860c5398176?auto=format&fit=crop&q=80&w=800' },
+                    { id: 3, title: 'Cetak Stiker', desc: 'Tersedia bahan Chromo, Vinyl (anti air), dan Transparan. Cocok untuk label kemasan.', priceLabel: 'Mulai Dari', priceValue: 'Rp 15.000', priceUnit: '/lbr', badge: '', image: 'https://images.unsplash.com/photo-1572375992501-4b0892d50c69?auto=format&fit=crop&q=80&w=800' }
+                ]
             };
 
             const [settings, setSettings] = useState(defaultSettings);
@@ -196,7 +207,8 @@
                             bannerMaterials: data.bannerMaterials || defaultSettings.bannerMaterials,
                             standTypes: data.standTypes || defaultSettings.standTypes,
                             stickerPapers: data.stickerPapers || defaultSettings.stickerPapers,
-                            employees: data.employees || defaultSettings.employees
+                            employees: data.employees || defaultSettings.employees,
+                            catalogItems: data.catalogItems || defaultSettings.catalogItems
                         });
                     } else { setDoc(settingsRef, defaultSettings); }
                 });
@@ -241,36 +253,144 @@
                         if (!url) return '';
                         if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
                         return new URL(url, window.location.origin + window.location.pathname).href;
-                    } catch (e) { return url || ''; } // Anti Crash URL
+                    } catch (e) { return url || ''; }
                 };
-
                 const logoUrl = getAbsoluteUrl(settings.logo);
                 const manifest = {
                     name: settings.appName, short_name: "AHA App", start_url: window.location.href, display: "standalone", background_color: "#ffffff", theme_color: settings.themeColor,
                     icons: [{ src: logoUrl, sizes: "192x192", type: "image/png", purpose: "any maskable" }, { src: logoUrl, sizes: "512x512", type: "image/png", purpose: "any maskable" }]
                 };
-
                 const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
                 const url = URL.createObjectURL(blob);
                 let link = document.querySelector('link[rel="manifest"]');
                 if (!link) { link = document.createElement('link'); link.rel = 'manifest'; document.head.appendChild(link); }
                 link.href = url;
-
                 let iconLink = document.querySelector('link[rel="apple-touch-icon"]');
                 if (!iconLink) { iconLink = document.createElement('link'); iconLink.rel = 'apple-touch-icon'; document.head.appendChild(iconLink); }
                 iconLink.href = logoUrl;
             }, [settings.appName, settings.themeColor, settings.logo]);
 
-            useEffect(() => {
-                window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); setInstallPrompt(e); });
-            }, []);
+            useEffect(() => { window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); setInstallPrompt(e); }); }, []);
 
             const handleInstallClick = () => {
                 if (installPrompt) { installPrompt.prompt(); installPrompt.userChoice.then((r) => { if (r.outcome === 'accepted') setInstallPrompt(null); }); } 
                 else { alert("Tap menu browser (titik tiga) -> 'Install App' / 'Tambahkan ke Layar Utama'"); }
             };
 
-            const handleLogout = () => { if(confirm("Keluar dari aplikasi?")) { setUser(null); setPage('login'); } };
+            const handleLogout = () => { if(confirm("Keluar dari aplikasi?")) { setUser(null); setPage('catalog'); } };
+
+            // --- COMPONENTS ---
+
+            // 1. HALAMAN KATALOG (LANDING PAGE)
+            const CatalogPage = () => {
+                return (
+                    <div className="flex flex-col min-h-screen">
+                        <nav className="fixed w-full z-50 glass-header border-b border-gray-200 shadow-sm transition-all duration-300 py-3 md:py-4">
+                            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
+                                <div className="flex items-center gap-3">
+                                    <img src={settings.logo} alt="Logo" className="w-10 h-10 md:w-12 md:h-12 rounded-full border border-gray-200 shadow-sm object-cover" onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} />
+                                    <div>
+                                        <h1 className="font-black text-xl md:text-2xl leading-none text-gray-900 tracking-tight">{settings.appName}</h1>
+                                        <p className="text-[10px] md:text-xs font-bold tracking-[0.2em] uppercase" style={{color: settings.themeColor}}>{settings.tagline}</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setPage('login')} className="text-gray-400 hover:text-red-600 transition p-2 flex flex-col items-center group cursor-pointer" title="Login Admin">
+                                    <i className="fas fa-lock text-lg group-hover:scale-110 transition transform"></i>
+                                    <span className="text-[8px] font-bold opacity-0 group-hover:opacity-100 transition mt-1 uppercase tracking-widest">Admin</span>
+                                </button>
+                            </div>
+                        </nav>
+
+                        <header className="relative pt-24 pb-16 md:pt-32 md:pb-24 flex items-center justify-center min-h-[60vh] md:min-h-[70vh]">
+                            <div className="absolute inset-0 z-0">
+                                <img src={settings.cover} className="w-full h-full object-cover" onError={(e) => e.target.src='https://images.unsplash.com/photo-1626785774573-4b799315345d?auto=format&fit=crop&q=80&w=2071'} />
+                                <div className="absolute inset-0 bg-gradient-to-r from-gray-900/90 to-gray-900/60"></div>
+                            </div>
+                            
+                            <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-white fade-in-up">
+                                <span className="text-white px-4 py-1.5 rounded-full text-xs font-black tracking-widest uppercase mb-6 inline-block shadow-lg" style={{backgroundColor: settings.themeColor}}>Layanan Cetak Terbaik di Bayan</span>
+                                <h2 className="text-4xl md:text-6xl lg:text-7xl font-black mb-6 leading-tight tracking-tight">Solusi Cetak Cepat,<br/><span className="text-transparent bg-clip-text bg-gradient-to-r from-red-400 to-red-600">Kualitas Hebat.</span></h2>
+                                <p className="mt-4 text-lg md:text-xl text-gray-300 max-w-2xl mx-auto mb-10 font-medium">Melayani cetak Spanduk, Banner, Stiker, dan desain grafis profesional. Tersedia layanan Premium (Kilat 1 Jam Jadi).</p>
+                                
+                                <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                                    <button onClick={() => setPage('customer')} className="font-black py-4 px-8 rounded-full shadow-xl transform hover:scale-105 transition duration-300 text-lg flex items-center justify-center text-white" style={{backgroundColor: settings.themeColor}}>
+                                        <i className="fas fa-shopping-cart mr-3"></i> Pesan Sekarang
+                                    </button>
+                                </div>
+                            </div>
+                        </header>
+
+                        <main className="flex-1 py-16 md:py-24 bg-gray-50">
+                            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                                <div className="text-center mb-16 fade-in-up">
+                                    <h3 className="text-3xl md:text-4xl font-black text-gray-900 mb-4">Katalog Layanan Kami</h3>
+                                    <div className="w-24 h-1.5 mx-auto rounded-full" style={{backgroundColor: settings.themeColor}}></div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                                    {settings.catalogItems?.map((item, idx) => (
+                                        <div key={idx} className="service-card bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 flex flex-col fade-in-up" style={{animationDelay: `${0.1 * (idx+1)}s`}}>
+                                            <div className="h-48 bg-gray-200 relative">
+                                                {item.image ? (
+                                                    <img src={item.image} className="w-full h-full object-cover" onError={(e) => e.target.src='https://via.placeholder.com/800x400?text=No+Image'}/>
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200"><i className="fas fa-image text-4xl text-gray-300"></i></div>
+                                                )}
+                                                {item.badge && <div className="absolute top-4 right-4 bg-white text-gray-900 font-black px-3 py-1 rounded-lg text-sm shadow">{item.badge}</div>}
+                                            </div>
+                                            <div className="p-6 md:p-8 flex-1 flex flex-col">
+                                                <h4 className="text-2xl font-black text-gray-900 mb-2">{item.title}</h4>
+                                                <p className="text-gray-500 text-sm mb-4 leading-relaxed">{item.desc}</p>
+                                                <div className="mt-auto pt-4 border-t border-gray-100 flex items-end justify-between">
+                                                    <div>
+                                                        <p className="text-xs text-gray-400 font-bold uppercase mb-1">{item.priceLabel}</p>
+                                                        <p className="text-2xl font-black text-red-600">{item.priceValue}<span className="text-sm text-gray-500 font-medium">{item.priceUnit}</span></p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    <div className="service-card bg-gradient-to-br from-gray-900 to-black rounded-3xl overflow-hidden shadow-xl border border-gray-800 flex flex-col fade-in-up transform md:-translate-y-4" style={{animationDelay: '0.6s'}}>
+                                        <div className="p-6 md:p-8 flex-1 flex flex-col text-white">
+                                            <div className="bg-yellow-500 text-yellow-900 font-black text-xs px-3 py-1 rounded-md inline-block w-max mb-4 uppercase tracking-widest"><i className="fas fa-bolt mr-1"></i> VIP Service</div>
+                                            <h4 className="text-2xl font-black text-white mb-2">Premium (Kilat)</h4>
+                                            <p className="text-gray-400 text-sm mb-4 leading-relaxed">Butuh cepat? Layanan 1 Jam Jadi. Langsung dikerjakan, prioritas utama. *Gratis Jasa Desain. (Khusus area Bayan)</p>
+                                            <div className="mt-auto pt-4 border-t border-gray-800 flex items-end justify-between">
+                                                <div>
+                                                    <p className="text-xs text-gray-500 font-bold uppercase mb-1">Biaya Tambahan</p>
+                                                    <p className="text-3xl font-black text-yellow-500">+{formatRupiah(settings.premiumFee)}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </main>
+
+                        <section className="py-16 text-white text-center" style={{backgroundColor: settings.themeColor}}>
+                            <div className="max-w-4xl mx-auto px-4">
+                                <h2 className="text-3xl md:text-4xl font-black mb-6">Siap Untuk Mencetak Ide Anda?</h2>
+                                <p className="mb-8 font-medium opacity-90">Isi form pemesanan secara online sekarang. Data akan langsung terhubung ke WhatsApp Admin kami.</p>
+                                <button onClick={() => setPage('customer')} className="bg-white text-gray-900 font-black py-4 px-10 rounded-full shadow-lg hover:bg-gray-100 hover:shadow-xl transition transform hover:scale-105 text-lg inline-block">
+                                    Buat Pesanan Online <i className="fas fa-arrow-right ml-2 text-red-600"></i>
+                                </button>
+                            </div>
+                        </section>
+
+                        <footer className="bg-gray-900 py-12 text-center text-gray-400">
+                            <div className="max-w-7xl mx-auto px-4">
+                                <div className="flex justify-center items-center gap-3 mb-6">
+                                    <img src={settings.logo} className="w-10 h-10 rounded-full grayscale opacity-50 object-cover" onError={(e) => e.target.src='https://via.placeholder.com/50?text=AHA'} />
+                                    <span className="font-black text-xl text-white tracking-widest opacity-50 uppercase">{settings.appName}</span>
+                                </div>
+                                <p className="text-sm font-medium mb-4">Kec. Bayan, Lombok Utara &bull; ahacreativ@gmail.com &bull; +62 819-1732-3268</p>
+                                <p className="text-xs border-t border-gray-800 pt-6 inline-block">&copy; {new Date().getFullYear()} {settings.appName}. Built with ❤️ by <strong>Ahmad Yani</strong>.</p>
+                            </div>
+                        </footer>
+                    </div>
+                );
+            }
 
             const Login = () => {
                 const [inputPass, setInputPass] = useState('');
@@ -285,17 +405,17 @@
 
                 return (
                     <div className="min-h-screen flex items-center justify-center relative bg-white overflow-hidden">
-                        <div className="absolute inset-0 z-0"><img src={settings.cover} onError={(e) => e.target.src='https://via.placeholder.com/800x600/333/fff?text=Cover'} className="w-full h-full object-cover" /><div className="absolute inset-0 bg-white/40 backdrop-blur-sm"></div></div>
+                        <div className="absolute inset-0 z-0"><img src={settings.cover} onError={(e) => e.target.src='https://via.placeholder.com/800x600/333/fff?text=Cover+Image'} className="w-full h-full object-cover" /><div className="absolute inset-0 bg-white/40 backdrop-blur-sm"></div></div>
                         <div className="relative z-10 w-full max-w-sm p-8 bg-white/90 backdrop-blur-md rounded-2xl shadow-2xl mx-4 fade-in">
-                            <div className="text-center mb-8">
-                                {/* Tambahan class animate-coin disini */}
+                            <button onClick={()=>setPage('catalog')} className="absolute top-4 left-4 text-gray-500 hover:text-gray-900"><i className="fas fa-arrow-left"></i> Kembali</button>
+                            <div className="text-center mb-8 mt-4">
                                 <img src={settings.logo} onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} className="w-28 h-28 mx-auto rounded-full shadow-lg mb-4 object-cover bg-white border-2 border-gray-100 animate-coin" />
                                 <h1 className="text-3xl font-black text-gray-800 tracking-tight">{settings.appName}</h1>
                                 <p className="text-sm font-bold text-gray-500 tracking-[0.2em] uppercase mt-1">{settings.tagline}</p>
                             </div>
                             <div className="space-y-5">
                                 <div className="relative">
-                                    <input type={showPass?"text":"password"} className="w-full px-5 py-4 rounded-xl border border-gray-300 focus:ring-2 focus:ring-red-500 pr-12 font-medium" placeholder="Kata Sandi" value={inputPass} onChange={e=>setInputPass(e.target.value)} onKeyPress={e=>e.key==='Enter'&&doLogin()}/>
+                                    <input type={showPass?"text":"password"} className="w-full px-5 py-4 rounded-xl border border-gray-300 focus:ring-2 focus:ring-red-500 pr-12 font-medium" placeholder="Kata Sandi Admin" value={inputPass} onChange={e=>setInputPass(e.target.value)} onKeyPress={e=>e.key==='Enter'&&doLogin()}/>
                                     <button onClick={()=>setShowPass(!showPass)} className="absolute right-4 top-4 text-gray-400 hover:text-gray-700 text-lg"><i className={`fas ${showPass?'fa-eye-slash':'fa-eye'}`}></i></button>
                                 </div>
                                 {error && <p className="text-red-500 text-sm text-center font-bold bg-red-50 py-2 rounded">{error}</p>}
@@ -311,14 +431,10 @@
                 const today = new Date().toISOString().split('T')[0];
                 const activeTrx = transactions.filter(t => !t.isDeleted);
                 const income = activeTrx.filter(t => t.date.startsWith(today)).reduce((a, b) => a + b.total, 0);
-                const copyLink = () => {
-                    const url = `${window.location.href.split('?')[0]}?mode=customer`;
-                    navigator.clipboard.writeText(url).then(() => alert("Link Pelanggan Disalin!"));
-                };
-
+                
                 return (
                     <div className="fade-in space-y-6 p-4 md:p-8">
-                        {installPrompt && <div className="bg-gradient-to-r from-gray-800 to-gray-900 text-white p-5 rounded-2xl flex justify-between items-center shadow-lg"><div><p className="font-bold text-lg">Install Aplikasi</p><p className="text-xs text-gray-300">Akses lebih cepat dari layar utama HP.</p></div><button onClick={handleInstallClick} className="bg-white text-gray-900 px-5 py-2 rounded-xl text-sm font-black shadow hover:bg-gray-100 transition">INSTALL</button></div>}
+                        {installPrompt && <div className="bg-gray-800 text-white p-4 rounded-xl flex justify-between items-center shadow"><div><p className="font-bold">Install Aplikasi</p><p className="text-xs">Agar lebih mudah diakses.</p></div><button onClick={handleInstallClick} className="bg-white text-black px-3 py-1 rounded text-sm font-bold">Install</button></div>}
                         
                         <div className="bg-white rounded-2xl p-6 md:p-8 shadow-sm border border-gray-100 relative overflow-hidden group hover:shadow-md transition">
                             <div className="relative z-10 flex items-center justify-between">
@@ -342,13 +458,13 @@
                                 <div className="w-14 h-14 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-2xl group-hover:scale-110 transition"><i className="fas fa-book"></i></div>
                                 <span className="font-bold text-gray-700">Pembukuan</span>
                             </button>
-                            <button onClick={copyLink} className="bg-gradient-to-br from-purple-500 to-indigo-600 text-white p-6 rounded-2xl shadow-md flex flex-col items-center gap-3 active:scale-95 transition group">
+                            <button onClick={()=>{navigator.clipboard.writeText(`${window.location.href.split('?')[0]}?mode=customer`).then(()=>alert("Link Pelanggan Disalin!"));}} className="bg-gradient-to-br from-purple-500 to-indigo-600 text-white p-6 rounded-2xl shadow-md flex flex-col items-center gap-3 active:scale-95 transition group">
                                 <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center text-2xl group-hover:scale-110 transition"><i className="fas fa-share-alt"></i></div>
                                 <span className="font-bold text-sm text-center">Share Link Order</span>
                             </button>
-                            <button onClick={()=>setPage('about')} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 text-gray-600 active:scale-95 transition hover:bg-orange-50 group">
-                                <div className="w-12 h-12 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-2xl group-hover:scale-110 transition"><i className="fas fa-info-circle"></i></div>
-                                <span className="font-bold text-sm text-center">Tentang</span>
+                            <button onClick={()=>setPage('catalog')} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 text-gray-600 active:scale-95 transition hover:bg-orange-50 group">
+                                <div className="w-12 h-12 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-2xl group-hover:scale-110 transition"><i className="fas fa-store"></i></div>
+                                <span className="font-bold text-sm text-center">Lihat Katalog</span>
                             </button>
                         </div>
                     </div>
@@ -360,10 +476,8 @@
                 const [data, setData] = useState({ 
                     name: '', qty: 1, design: false, rush: false, loc: 'Bayan', w: '', h: '', wUnit: 'm', hUnit: 'm', 
                     mat: settings.bannerMaterials?.[0]?.name || 'Biasa', 
-                    stand: false, 
-                    standType: settings.standTypes?.[0]?.name || 'Biasa', 
-                    grommet: true, 
-                    stPaper: settings.stickerPapers?.[0]?.name || 'Chromo', 
+                    stand: false, standType: settings.standTypes?.[0]?.name || 'Biasa', 
+                    grommet: true, stPaper: settings.stickerPapers?.[0]?.name || 'Chromo', 
                     stW: '', stH: '' 
                 });
 
@@ -412,7 +526,7 @@
                 };
 
                 return (
-                    <div className="fade-in bg-white rounded-2xl shadow-sm border border-gray-100 p-6 m-4 md:m-8">
+                    <div className="fade-in bg-white rounded-2xl shadow border p-6 m-4 md:m-8">
                         <div className="flex gap-2 mb-6 bg-gray-50 p-1 rounded-xl">
                             <button onClick={()=>setTab('spanduk')} className={`flex-1 py-3 font-bold rounded-lg transition ${tab==='spanduk'?'bg-white text-red-600 shadow-sm':'text-gray-400'}`}>Spanduk</button>
                             <button onClick={()=>setTab('stiker')} className={`flex-1 py-3 font-bold rounded-lg transition ${tab==='stiker'?'bg-white text-red-600 shadow-sm':'text-gray-400'}`}>Stiker</button>
@@ -588,105 +702,154 @@
 
             const DeveloperDashboard = () => {
                 const deleted = transactions.filter(t => t.isDeleted);
-                return (<div className="fade-in p-4 md:p-8"><div className="bg-gray-900 text-white p-6 rounded-2xl shadow-xl mb-6 border border-gray-700"><h2 className="text-2xl font-black"><i className="fas fa-user-secret mr-3 text-red-500"></i>Mode Developer</h2><p className="text-sm text-gray-400 mt-1">Audit Trail - Transaksi Dihapus</p></div><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{deleted.map(t=>(<div key={t.id} className="bg-red-50 p-5 rounded-2xl border-l-4 border-red-500 flex justify-between items-center shadow-sm"><div><p className="font-bold text-gray-800">{t.customerName} <span className="text-xs bg-red-600 text-white px-2 py-1 rounded ml-2 font-bold uppercase">Terhapus</span></p><p className="text-xs text-gray-600 mt-1">{t.details}</p><p className="text-[10px] text-gray-400 mt-2 font-mono">{formatDate(t.date)}</p></div><p className="font-black text-red-700 line-through text-lg opacity-50">{formatRupiah(t.total)}</p></div>))}</div></div>);
+                return (<div className="fade-in p-4 md:p-8"><div className="bg-gray-900 text-white p-6 rounded-2xl shadow-xl mb-6 border border-gray-700"><h2 className="text-2xl font-black"><i className="fas fa-user-secret mr-3 text-red-500"></i>Mode Developer</h2><p className="text-sm opacity-70">Audit Trail - Transaksi Dihapus</p></div><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{deleted.map(t=>(<div key={t.id} className="bg-red-50 p-5 rounded-2xl border-l-4 border-red-500 flex justify-between items-center shadow-sm"><div><p className="font-bold text-gray-800">{t.customerName} <span className="text-xs bg-red-600 text-white px-2 py-1 rounded ml-2 font-bold uppercase">Terhapus</span></p><p className="text-xs text-gray-600 mt-1">{t.details}</p><p className="text-[10px] text-gray-400 mt-2 font-mono">{formatDate(t.date)}</p></div><p className="font-black text-red-700 line-through text-lg opacity-50">{formatRupiah(t.total)}</p></div>))}</div></div>);
             };
 
             const Settings = () => {
                 const [localSet, setLocalSet] = useState({...settings});
                 const [emp, setEmp] = useState('');
+                
+                // Form input untuk Katalog Item baru
+                const [newCat, setNewCat] = useState({ title: '', desc: '', priceLabel: 'Mulai Dari', priceValue: '', priceUnit: '/m²', badge: '', image: '' });
+
                 const save = () => handleSaveSettings(localSet);
                 const fileHandler = (e, k) => { const f=e.target.files[0]; if(f){ const r=new FileReader(); r.onloadend=()=>setLocalSet({...localSet, [k]:r.result}); r.readAsDataURL(f); }};
                 const updateArr = (k, i, v) => { const arr=[...localSet[k]]; arr[i].price=parseInt(v)||0; setLocalSet({...localSet, [k]:arr}); };
                 
-                // Perbaikan Fungsi Tambah Karyawan (BUG FIXED)
                 const addEmployee = () => { 
-                    if(emp.trim()) { 
-                        setLocalSet({...localSet, employees: [...(localSet.employees || []), emp.trim()]}); 
-                        setEmp(''); 
-                    } 
+                    if(emp.trim()) { setLocalSet({...localSet, employees: [...(localSet.employees || []), emp.trim()]}); setEmp(''); } 
                 };
-                
                 const removeEmployee = (idx) => { const updated = [...localSet.employees]; updated.splice(idx, 1); setLocalSet({...localSet, employees: updated}); };
+
+                const addCatalog = () => {
+                    if(newCat.title && newCat.priceValue) {
+                        const newItem = { ...newCat, id: Date.now() };
+                        setLocalSet({...localSet, catalogItems: [...(localSet.catalogItems || []), newItem]});
+                        setNewCat({ title: '', desc: '', priceLabel: 'Mulai Dari', priceValue: '', priceUnit: '/m²', badge: '', image: '' });
+                    } else { alert("Judul & Harga tidak boleh kosong!"); }
+                };
+                const removeCatalog = (idx) => { const updated = [...localSet.catalogItems]; updated.splice(idx, 1); setLocalSet({...localSet, catalogItems: updated}); };
 
                 return (
                     <div className="fade-in p-4 md:p-8">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-2xl font-black text-gray-800">Pengaturan Aplikasi</h2>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white p-6 md:p-8 rounded-3xl shadow-lg border border-gray-100">
-                            <div className="space-y-6">
-                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                                    <label className="text-xs font-black text-gray-500 block mb-3 uppercase tracking-wider">Logo Perusahaan</label>
-                                    <input type="file" accept="image/*" onChange={e=>fileHandler(e,'logo')} className="w-full text-sm mb-3"/>
-                                    <div className="bg-white p-3 rounded-lg border border-gray-200 inline-block shadow-sm">
-                                        {localSet.logo && <img src={localSet.logo} onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} className="h-16 w-16 object-contain rounded-full"/>}
-                                    </div>
-                                </div>
-                                
-                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                                    <label className="text-xs font-black text-gray-500 block mb-3 uppercase tracking-wider">Foto Sampul (Cover)</label>
-                                    <input type="file" accept="image/*" onChange={e=>fileHandler(e,'cover')} className="w-full text-sm mb-3"/>
-                                    {localSet.cover && <img src={localSet.cover} onError={(e) => e.target.src='https://via.placeholder.com/800x600/333/fff?text=Cover'} className="h-24 w-full border object-cover rounded-lg shadow-sm"/>}
-                                </div>
-                                
+                        <h2 className="text-2xl font-black text-gray-800 mb-6">Pengaturan Aplikasi</h2>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            
+                            {/* KOLOM KIRI - Tampilan & Info */}
+                            <div className="space-y-6 bg-white p-6 md:p-8 rounded-3xl shadow-lg border border-gray-100">
                                 <div>
-                                    <label className="text-xs font-black text-gray-500 block mb-2 uppercase tracking-wider">Nama Direktur / CEO</label>
-                                    <input type="text" className="w-full border p-4 rounded-xl bg-gray-50 focus:bg-white font-bold" value={localSet.ceoName} onChange={e=>setLocalSet({...localSet, ceoName:e.target.value})} />
+                                    <h3 className="font-black text-gray-800 border-b-2 border-gray-200 pb-2 mb-4">Tampilan & Identitas</h3>
+                                    <div className="space-y-4">
+                                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                            <label className="text-xs font-black text-gray-500 block mb-3 uppercase">Logo Perusahaan</label>
+                                            <input type="file" accept="image/*" onChange={e=>fileHandler(e,'logo')} className="w-full text-sm mb-3"/>
+                                            <div className="bg-white p-2 rounded-lg border border-gray-200 inline-block shadow-sm">{localSet.logo && <img src={localSet.logo} onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} className="h-12 w-12 object-contain rounded-full"/>}</div>
+                                        </div>
+                                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                            <label className="text-xs font-black text-gray-500 block mb-3 uppercase">Foto Sampul (Cover)</label>
+                                            <input type="file" accept="image/*" onChange={e=>fileHandler(e,'cover')} className="w-full text-sm mb-3"/>
+                                            {localSet.cover && <img src={localSet.cover} onError={(e) => e.target.src='https://via.placeholder.com/800x600/333/fff?text=Cover'} className="h-20 w-full border object-cover rounded-lg shadow-sm"/>}
+                                        </div>
+                                        <div><label className="text-xs font-black text-gray-500 block mb-2 uppercase">Nama Direktur / CEO</label><input type="text" className="w-full border p-3 rounded-xl bg-gray-50 font-bold" value={localSet.ceoName} onChange={e=>setLocalSet({...localSet, ceoName:e.target.value})} /></div>
+                                    </div>
                                 </div>
 
                                 <div>
                                     <h3 className="font-black text-gray-800 border-b-2 border-red-500 inline-block pb-1 mb-4">Manajemen Tim Kreatif</h3>
-                                    <div className="flex gap-2 mb-4">
-                                        <input type="text" value={emp} onChange={e=>setEmp(e.target.value)} placeholder="Ketik nama tim..." className="border p-3 flex-1 rounded-xl text-sm bg-gray-50 focus:bg-white"/>
-                                        <button onClick={addEmployee} className="bg-green-500 hover:bg-green-600 transition text-white px-5 rounded-xl font-bold shadow-md"><i className="fas fa-plus"></i></button>
-                                    </div>
+                                    <div className="flex gap-2 mb-4"><input type="text" value={emp} onChange={e=>setEmp(e.target.value)} placeholder="Ketik nama tim..." className="border p-3 flex-1 rounded-xl text-sm bg-gray-50"/><button onClick={addEmployee} className="bg-green-500 hover:bg-green-600 text-white px-5 rounded-xl font-bold"><i className="fas fa-plus"></i></button></div>
                                     <ul className="space-y-2">
-                                        {localSet.employees?.map((e,i)=>(
-                                            <li key={i} className="flex justify-between items-center bg-white p-3 rounded-xl text-sm border border-gray-100 shadow-sm font-bold text-gray-700">
-                                                <span><i className="fas fa-user-circle text-gray-300 mr-2"></i>{e}</span>
-                                                <button onClick={()=>removeEmployee(i)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition"><i className="fas fa-times"></i></button>
-                                            </li>
-                                        ))}
+                                        {localSet.employees?.map((e,i)=>(<li key={i} className="flex justify-between items-center bg-white p-3 rounded-xl text-sm border border-gray-100 shadow-sm font-bold text-gray-700"><span><i className="fas fa-user-circle text-gray-300 mr-2"></i>{e}</span><button onClick={()=>removeEmployee(i)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition"><i className="fas fa-times"></i></button></li>))}
                                         {(!localSet.employees || localSet.employees.length === 0) && <p className="text-xs text-gray-400 italic">Belum ada tim yang ditambahkan.</p>}
                                     </ul>
                                 </div>
                             </div>
                             
-                            <div className="space-y-6">
-                                <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
-                                    <h3 className="font-black text-gray-800 border-b pb-3 mb-4">Harga Bahan Spanduk <span className="text-xs font-normal text-gray-400">(per Meter)</span></h3>
-                                    {localSet.bannerMaterials?.map((m,i)=>(
-                                        <div key={i} className="flex justify-between items-center mb-3">
-                                            <span className="text-sm font-bold text-gray-600">{m.name}</span>
-                                            <input type="number" value={m.price} onChange={e=>updateArr('bannerMaterials',i,e.target.value)} className="border p-2 w-28 rounded-lg text-right bg-gray-50 font-mono text-sm"/>
+                            {/* KOLOM KANAN - Harga */}
+                            <div className="space-y-6 bg-white p-6 md:p-8 rounded-3xl shadow-lg border border-gray-100">
+                                <div><h3 className="font-black text-gray-800 border-b pb-3 mb-4">Harga Bahan Spanduk</h3>{localSet.bannerMaterials?.map((m,i)=>(<div key={i} className="flex justify-between items-center mb-2 bg-gray-50 p-2 rounded"><span className="text-sm font-bold text-gray-600">{m.name}</span><input type="number" value={m.price} onChange={e=>updateArr('bannerMaterials',i,e.target.value)} className="border p-2 w-28 rounded-lg text-right bg-white font-mono text-sm shadow-sm"/></div>))}</div>
+                                <div><h3 className="font-bold text-gray-800 border-b pb-3 mb-4">Harga Stand Banner</h3>{localSet.standTypes?.map((s,i)=>(<div key={i} className="flex justify-between items-center mb-2 bg-gray-50 p-2 rounded"><span className="text-sm font-bold text-gray-600">{s.name}</span><input type="number" value={s.price} onChange={e=>updateArr('standTypes',i,e.target.value)} className="border p-2 w-28 rounded-lg text-right bg-white font-mono text-sm shadow-sm"/></div>))}</div>
+                                <div><h3 className="font-bold text-gray-800 border-b pb-3 mb-4">Harga Kertas Stiker</h3>{localSet.stickerPapers?.map((p,i)=>(<div key={i} className="flex justify-between items-center mb-2 bg-gray-50 p-2 rounded"><span className="text-sm font-bold text-gray-600">{p.name}</span><input type="number" value={p.price} onChange={e=>updateArr('stickerPapers',i,e.target.value)} className="border p-2 w-28 rounded-lg text-right bg-white font-mono text-sm shadow-sm"/></div>))}</div>
+                            </div>
+
+                            {/* BAGIAN BAWAH - Manajemen Katalog */}
+                            <div className="col-span-1 md:col-span-2 space-y-6 bg-white p-6 md:p-8 rounded-3xl shadow-lg border border-gray-100">
+                                <h3 className="font-black text-2xl text-gray-800 border-b-4 border-red-500 inline-block pb-2 mb-2">Manajemen Katalog Halaman Utama</h3>
+                                <p className="text-sm text-gray-500 mb-6">Tambah, edit, atau hapus layanan yang tampil di halaman depan aplikasi untuk pelanggan.</p>
+                                
+                                {/* Form Tambah Katalog */}
+                                <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 mb-6">
+                                    <h4 className="font-bold text-gray-700 mb-4"><i className="fas fa-plus-circle mr-2 text-green-500"></i>Tambah Item Katalog Baru</h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div><label className="text-xs font-bold text-gray-500 mb-1 block">Judul Layanan</label><input type="text" className="w-full border p-3 rounded-lg bg-white" placeholder="Cth: Cetak Kartu Nama" value={newCat.title} onChange={e=>setNewCat({...newCat, title:e.target.value})} /></div>
+                                        <div><label className="text-xs font-bold text-gray-500 mb-1 block">Harga (Teks)</label><input type="text" className="w-full border p-3 rounded-lg bg-white" placeholder="Cth: Rp 20.000" value={newCat.priceValue} onChange={e=>setNewCat({...newCat, priceValue:e.target.value})} /></div>
+                                        <div className="md:col-span-2"><label className="text-xs font-bold text-gray-500 mb-1 block">Deskripsi Pendek</label><textarea className="w-full border p-3 rounded-lg bg-white h-20" placeholder="Deskripsi layanan..." value={newCat.desc} onChange={e=>setNewCat({...newCat, desc:e.target.value})} /></div>
+                                        <div><label className="text-xs font-bold text-gray-500 mb-1 block">Label Harga (Kiri)</label><input type="text" className="w-full border p-3 rounded-lg bg-white" placeholder="Cth: Mulai Dari" value={newCat.priceLabel} onChange={e=>setNewCat({...newCat, priceLabel:e.target.value})} /></div>
+                                        <div><label className="text-xs font-bold text-gray-500 mb-1 block">Satuan Harga (Kanan)</label><input type="text" className="w-full border p-3 rounded-lg bg-white" placeholder="Cth: /kotak" value={newCat.priceUnit} onChange={e=>setNewCat({...newCat, priceUnit:e.target.value})} /></div>
+                                        <div><label className="text-xs font-bold text-gray-500 mb-1 block">Badge Spesial (Opsional)</label><input type="text" className="w-full border p-3 rounded-lg bg-white" placeholder="Cth: Best Seller" value={newCat.badge} onChange={e=>setNewCat({...newCat, badge:e.target.value})} /></div>
+                                        <div><label className="text-xs font-bold text-gray-500 mb-1 block">URL Gambar (Link Web)</label><input type="text" className="w-full border p-3 rounded-lg bg-white" placeholder="https://..." value={newCat.image} onChange={e=>setNewCat({...newCat, image:e.target.value})} /></div>
+                                    </div>
+                                    <button onClick={addCatalog} className="bg-green-500 text-white font-bold px-6 py-3 rounded-xl hover:bg-green-600 transition shadow">Tambahkan ke Katalog</button>
+                                </div>
+
+                                {/* List Katalog Aktif */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {localSet.catalogItems?.map((item, idx) => (
+                                        <div key={idx} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm flex flex-col">
+                                            <div className="h-32 bg-gray-100 relative">
+                                                {item.image ? <img src={item.image} className="w-full h-full object-cover" onError={(e) => e.target.src='https://via.placeholder.com/400x200?text=No+Image'}/> : <div className="w-full h-full flex items-center justify-center"><i className="fas fa-image text-gray-300 text-3xl"></i></div>}
+                                                {item.badge && <div className="absolute top-2 right-2 bg-white text-xs font-bold px-2 py-1 rounded shadow">{item.badge}</div>}
+                                            </div>
+                                            <div className="p-4 flex-1 flex flex-col">
+                                                <h4 className="font-bold text-gray-800 leading-tight mb-1">{item.title}</h4>
+                                                <p className="text-red-600 font-bold text-sm mb-3">{item.priceValue} <span className="text-gray-400 font-normal text-xs">{item.priceUnit}</span></p>
+                                                <button onClick={()=>removeCatalog(idx)} className="mt-auto w-full bg-red-50 text-red-600 py-2 rounded-lg text-xs font-bold hover:bg-red-100 transition"><i className="fas fa-trash mr-1"></i> Hapus Item</button>
+                                            </div>
                                         </div>
                                     ))}
+                                    {(!localSet.catalogItems || localSet.catalogItems.length === 0) && <p className="text-gray-400 italic text-sm p-4 col-span-full">Belum ada item di katalog.</p>}
                                 </div>
+
+                                <div className="pt-8 mt-4 border-t border-gray-100 space-y-3">
+                                    <button onClick={save} className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black shadow-xl text-lg hover:bg-blue-700 transition transform active:scale-95"><i className="fas fa-cloud-upload-alt mr-2"></i> SIMPAN SEMUA PENGATURAN</button>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                );
+            };
+
+            const CustomerForm = () => {
+                const [tab, setTab] = useState('spanduk');
+                const [data, setData] = useState({ name: '', phone: '', content: '', size: '', mat: 'Biasa', stand: false, rush: false });
+                const send = () => {
+                    const msg = `*ORDER BARU (${tab.toUpperCase()})*\nNama: ${data.name}\nHP: ${data.phone}\nUkuran: ${data.size}\nBahan: ${data.mat}\nStand: ${data.stand?'Ya':'Tidak'}\nIsi: ${data.content}\nLayanan: ${data.rush?'KILAT':'Regular'}`;
+                    window.open(`https://wa.me/6281917323268?text=${encodeURIComponent(msg)}`, '_blank');
+                };
+                return (
+                    <div className="fade-in p-4 md:p-8 flex justify-center">
+                        <div className="w-full max-w-xl bg-white p-8 rounded-2xl shadow-xl border border-gray-100 relative overflow-hidden">
+                            <button onClick={()=>setPage('catalog')} className="absolute top-4 left-4 text-gray-400 hover:text-gray-800 transition"><i className="fas fa-arrow-left mr-1"></i> Batal</button>
+                            <div className="text-center mb-8 mt-6">
+                                <img src={settings.logo} onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} className="w-24 h-24 mx-auto rounded-full mb-4 shadow-lg object-cover" />
+                                <h2 className="text-3xl font-black text-gray-800 tracking-tight">{settings.appName}</h2>
+                                <p className="text-gray-500 mt-1 font-medium">Formulir Pemesanan Online</p>
+                            </div>
+                            <div className="space-y-5">
+                                <div className="flex gap-2 p-1 bg-gray-100 rounded-lg"><button onClick={()=>setTab('spanduk')} className={`flex-1 py-3 rounded-md font-bold transition ${tab==='spanduk'?'bg-white shadow text-red-600':'text-gray-500'}`}>Spanduk Banner</button><button onClick={()=>setTab('stiker')} className={`flex-1 py-3 rounded-md font-bold transition ${tab==='stiker'?'bg-white shadow text-red-600':'text-gray-500'}`}>Cetak Stiker</button></div>
                                 
-                                <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
-                                    <h3 className="font-black text-gray-800 border-b pb-3 mb-4">Harga Stand Banner <span className="text-xs font-normal text-gray-400">(per Pcs)</span></h3>
-                                    {localSet.standTypes?.map((s,i)=>(
-                                        <div key={i} className="flex justify-between items-center mb-3">
-                                            <span className="text-sm font-bold text-gray-600">{s.name}</span>
-                                            <input type="number" value={s.price} onChange={e=>updateArr('standTypes',i,e.target.value)} className="border p-2 w-28 rounded-lg text-right bg-gray-50 font-mono text-sm"/>
-                                        </div>
-                                    ))}
-                                </div>
+                                <div><label className="text-xs font-bold text-gray-500 uppercase">Nama Lengkap</label><input type="text" className="w-full border p-4 rounded-xl mt-1 bg-gray-50 focus:bg-white transition" onChange={e=>setData({...data, name:e.target.value})}/></div>
+                                <div><label className="text-xs font-bold text-gray-500 uppercase">No. WhatsApp</label><input type="text" className="w-full border p-4 rounded-xl mt-1 bg-gray-50 focus:bg-white transition" onChange={e=>setData({...data, phone:e.target.value})}/></div>
+                                <div><label className="text-xs font-bold text-gray-500 uppercase">Ukuran (Contoh: 3x1m)</label><input type="text" className="w-full border p-4 rounded-xl mt-1 bg-gray-50 focus:bg-white transition" onChange={e=>setData({...data, size:e.target.value})}/></div>
                                 
-                                <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
-                                    <h3 className="font-black text-gray-800 border-b pb-3 mb-4">Harga Kertas Stiker <span className="text-xs font-normal text-gray-400">(Dasar)</span></h3>
-                                    {localSet.stickerPapers?.map((p,i)=>(
-                                        <div key={i} className="flex justify-between items-center mb-3">
-                                            <span className="text-sm font-bold text-gray-600">{p.name}</span>
-                                            <input type="number" value={p.price} onChange={e=>updateArr('stickerPapers',i,e.target.value)} className="border p-2 w-28 rounded-lg text-right bg-gray-50 font-mono text-sm"/>
-                                        </div>
-                                    ))}
-                                </div>
+                                <div><label className="text-xs font-bold text-gray-500 uppercase">Pilih Bahan Cetak</label><select className="w-full border p-4 rounded-xl mt-1 bg-white shadow-sm" onChange={e=>setData({...data, mat:e.target.value})}>{tab==='spanduk'?settings.bannerMaterials?.map(m=><option value={m.name}>{m.name}</option>):settings.stickerPapers?.map(p=><option value={p.name}>{p.name}</option>)}</select></div>
                                 
-                                <div className="pt-4 mt-8 space-y-3">
-                                    <button onClick={save} className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black shadow-xl text-lg hover:bg-blue-700 transition transform active:scale-95"><i className="fas fa-cloud-upload-alt mr-2"></i> SIMPAN PENGATURAN</button>
-                                    <button onClick={handleLogout} className="w-full bg-white text-red-600 py-4 rounded-2xl font-bold border-2 border-red-100 hover:bg-red-50 transition"><i className="fas fa-sign-out-alt mr-2"></i> KELUAR</button>
-                                </div>
+                                {tab==='spanduk'&&<label className="flex items-center p-4 border rounded-xl hover:bg-gray-50 cursor-pointer transition"><input type="checkbox" className="mr-4 w-6 h-6 accent-red-600" onChange={e=>setData({...data, stand:e.target.checked})}/> <span className="font-bold text-gray-700">Tambahkan Stand Banner</span></label>}
+                                
+                                <div><label className="text-xs font-bold text-gray-500 uppercase">Isi Tulisan & Keterangan Tambahan</label><textarea placeholder="Ketik tulisan di spanduk/stiker disini..." className="w-full border p-4 rounded-xl mt-1 bg-gray-50 focus:bg-white transition h-32" onChange={e=>setData({...data, content:e.target.value})}/></div>
+                                
+                                <button onClick={send} className="w-full bg-green-500 text-white py-4 rounded-xl font-black text-lg shadow-lg hover:bg-green-600 transition transform active:scale-95 mt-4 tracking-wide"><i className="fab fa-whatsapp mr-2 text-2xl"></i> Kirim ke WhatsApp Admin</button>
                             </div>
                         </div>
                     </div>
@@ -722,6 +885,7 @@
                                         <p className="font-black text-sm text-gray-400 mb-4 uppercase tracking-widest border-b pb-2"><i className="fas fa-users mr-2"></i>Tim Kreatif AHA</p>
                                         <div className="grid gap-3">
                                             {settings.employees?.map(e=><div key={e} className="flex items-center bg-white p-4 rounded-xl shadow-sm border border-gray-100 font-bold text-gray-700 text-lg"><div className="w-10 h-10 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center mr-4"><i className="fas fa-user-astronaut"></i></div>{e}</div>)}
+                                            {(!settings.employees || settings.employees.length === 0) && <p className="text-sm text-gray-400 italic">Belum ada tim.</p>}
                                         </div>
                                     </div>
                                 </div>
@@ -748,32 +912,31 @@
                 </div>
             );
 
-            // DESAIN RESPONSIF UNTUK DESKTOP & MOBILE
-            const Layout = ({ children }) => (
+            // DESAIN RESPONSIF UNTUK DESKTOP & MOBILE ADMIN PANEL
+            const AdminLayout = ({ children }) => (
                 <div className="flex flex-col h-screen bg-gray-200 w-full md:max-w-5xl lg:max-w-7xl mx-auto md:shadow-2xl relative overflow-hidden text-gray-800">
-                    {!isCustomerMode && page!=='login' && (
-                        <div className="flex-none z-40 bg-white/90 backdrop-blur-xl px-6 py-4 flex justify-between items-center shadow-sm w-full border-b border-gray-200">
-                            <div className="flex items-center gap-4">
-                                <img src={settings.logo} onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} className="w-12 h-12 rounded-full border border-gray-200 shadow-sm object-cover"/>
-                                <div>
-                                    <span className="font-black text-xl block leading-none text-gray-800">{settings.appName}</span>
-                                    <span className="text-[10px] text-red-600 font-black tracking-[0.2em] uppercase">{settings.tagline}</span>
-                                </div>
-                            </div>
-                            <div className="flex gap-5 items-center">
-                                {!dbReady&&<span className="text-xs bg-red-100 text-red-600 px-3 py-1.5 rounded-full font-bold animate-pulse"><i className="fas fa-wifi mr-1"></i> Offline</span>}
-                                {dbReady&&<span className="text-xs bg-green-50 text-green-600 px-3 py-1.5 rounded-full font-bold hidden md:inline-block border border-green-200"><i className="fas fa-cloud text-green-500 mr-1"></i> Tersambung</span>}
-                                <button onClick={()=>setPage('settings')} className="text-gray-400 hover:text-gray-900 text-2xl transition transform hover:rotate-90"><i className="fas fa-cog"></i></button>
-                                <button onClick={handleLogout} className="text-red-400 hover:text-red-600 text-2xl transition ml-2"><i className="fas fa-power-off"></i></button>
+                    <div className="flex-none z-40 bg-white/90 backdrop-blur-xl px-6 py-4 flex justify-between items-center shadow-sm w-full border-b border-gray-200">
+                        <div className="flex items-center gap-4">
+                            <img src={settings.logo} onError={(e) => e.target.src='https://via.placeholder.com/150?text=LOGO'} className="w-12 h-12 rounded-full border border-gray-200 shadow-sm object-cover"/>
+                            <div>
+                                <span className="font-black text-xl block leading-none text-gray-800">{settings.appName}</span>
+                                <span className="text-[10px] text-red-600 font-black tracking-[0.2em] uppercase">{settings.tagline}</span>
                             </div>
                         </div>
-                    )}
+                        <div className="flex gap-5 items-center">
+                            {!dbReady&&<span className="text-xs bg-red-100 text-red-600 px-3 py-1.5 rounded-full font-bold animate-pulse"><i className="fas fa-wifi mr-1"></i> Offline</span>}
+                            {dbReady&&<span className="text-xs bg-green-50 text-green-600 px-3 py-1.5 rounded-full font-bold hidden md:inline-block border border-green-200"><i className="fas fa-cloud text-green-500 mr-1"></i> Tersambung</span>}
+                            <button onClick={()=>setPage('catalog')} className="text-gray-400 hover:text-blue-600 text-2xl transition transform hover:scale-110" title="Lihat Web Utama"><i className="fas fa-globe"></i></button>
+                            <button onClick={()=>setPage('settings')} className="text-gray-400 hover:text-gray-900 text-2xl transition transform hover:rotate-90"><i className="fas fa-cog"></i></button>
+                            <button onClick={handleLogout} className="text-red-400 hover:text-red-600 text-2xl transition ml-2"><i className="fas fa-power-off"></i></button>
+                        </div>
+                    </div>
                     
                     <div className="flex-1 overflow-y-auto hide-scrollbar relative bg-gray-100 w-full">
                         {children}
                     </div>
 
-                    {!isCustomerMode && page!=='login' && page!=='receipt' && (
+                    {page !== 'receipt' && (
                         <div className="flex-none bg-white border-t border-gray-200 flex justify-around py-4 pb-safe z-40 text-xs font-black text-gray-400 w-full shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)]">
                             <button onClick={()=>setPage('dashboard')} className={`flex flex-col items-center gap-1.5 transition duration-300 w-1/4 ${page==='dashboard'?'text-red-600 transform scale-110':'hover:text-gray-600'}`}><i className="fas fa-home text-2xl mb-1"></i>HOME</button>
                             <button onClick={()=>setPage('calculator')} className={`flex flex-col items-center gap-1.5 transition duration-300 w-1/4 ${page==='calculator'?'text-red-600 transform scale-110':'hover:text-gray-600'}`}><i className="fas fa-calculator text-2xl mb-1"></i>HITUNG</button>
@@ -784,11 +947,14 @@
                 </div>
             );
 
+            // ROUTING LOGIC
+            if (page === 'catalog') return <CatalogPage />;
             if (page === 'login') return <Login />;
-            if (page === 'customer') return <Layout><CustomerForm /></Layout>;
+            if (page === 'customer') return <CustomerForm />; // Formulir Pesanan full layar tanpa navigasi admin
 
+            // Admin Area
             return (
-                <Layout>
+                <AdminLayout>
                     {page === 'dashboard' && <Dashboard />}
                     {page === 'calculator' && <Calculator />}
                     {page === 'receipt' && <Receipt />}
@@ -796,7 +962,7 @@
                     {page === 'settings' && <Settings />}
                     {page === 'about' && <About />}
                     {page === 'developer_dashboard' && <DeveloperDashboard />}
-                </Layout>
+                </AdminLayout>
             );
         };
 
